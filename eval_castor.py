@@ -7,6 +7,7 @@ Run from anywhere:
     python DeGF/Eval_CASTOR/eval_castor.py
 """
 
+import argparse
 import json
 import re
 from pathlib import Path
@@ -264,6 +265,31 @@ def vessel_jaccard(gt_text: str, pred_text: str) -> float:
     return len(a & b) / len(a | b)
 
 
+def _gemma_val(v):
+    """Translate Gemma UNKNOWN sentinel to None so downstream treats it as absent."""
+    if v is None:
+        return None
+    s = str(v).strip()
+    return None if s.upper() == "UNKNOWN" else s
+
+
+def load_pre_parsed(path: Path) -> dict:
+    """Load a Gemma-parsed JSONL. Returns {image -> record} for successfully parsed records."""
+    result = {}
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if rec.get("gemma_parse_ok") and "image" in rec:
+                result[rec["image"]] = rec
+    return result
+
+
 def cargo_match(gt_cargo: str, pred_cargo) -> str:
     null_vals = {"", "nan", "none", "null"}
     gt_has   = gt_cargo.lower() not in null_vals
@@ -279,14 +305,27 @@ def cargo_match(gt_cargo: str, pred_cargo) -> str:
 # Core evaluation
 # ---------------------------------------------------------------------------
 
-def evaluate_run(records: list, gt_dict: dict, prompt_style: str) -> pd.DataFrame:
+def evaluate_run(records: list, gt_dict: dict, prompt_style: str, pre_parsed_dict: dict = None) -> pd.DataFrame:
     rows = []
     for rec in records:
         img  = rec["image"]
         text = rec["text"]
         gt   = gt_dict.get(img, {})
 
-        parsed, parse_fail_reason = extract_json_block(text)
+        if pre_parsed_dict and img in pre_parsed_dict:
+            pp = pre_parsed_dict[img]
+            parsed = {
+                "state":         _gemma_val(pp.get("state")),
+                "vessel_type":   _gemma_val(pp.get("vessel_type")),
+                "size_estimate": _gemma_val(pp.get("size_estimate")),
+                "cargo":         _gemma_val(pp.get("cargo")),
+            }
+            parse_fail_reason = ""
+            gemma_qs = {f"q{i}": _gemma_val(pp.get(f"q{i}")) for i in range(1, 6)}
+        else:
+            parsed, parse_fail_reason = extract_json_block(text)
+            gemma_qs = None
+
         parse_error = parsed is None
 
         pred_state     = normalize_state(parsed.get("state") if parsed else None)
@@ -294,7 +333,7 @@ def evaluate_run(records: list, gt_dict: dict, prompt_style: str) -> pd.DataFram
         pred_size_raw  = _safe_str(parsed.get("size_estimate") if parsed else None)
         pred_cargo_raw = parsed.get("cargo") if parsed else None
 
-        pred_qs = extract_q_answers(text, prompt_style)
+        pred_qs = gemma_qs if gemma_qs is not None else extract_q_answers(text, prompt_style)
 
         gt_state         = gt.get("state", "")
         gt_size_bucket   = normalize_size(gt.get("size_estimate", ""))
@@ -441,6 +480,15 @@ def summary_row(df: pd.DataFrame, run_name: str, diffusion: bool, prompt_style: 
 # ---------------------------------------------------------------------------
 
 def main():
+    parser = argparse.ArgumentParser(description="Evaluate CASTOR LLM inference against human GT.")
+    parser.add_argument(
+        "--pre-parsed", action="store_true",
+        help="Load Gemma pre-parsed JSONL from results/gemma_parsed/ instead of running regex extraction.",
+    )
+    args = parser.parse_args()
+
+    GEMMA_PARSED_DIR = OUT_DIR / "gemma_parsed"
+
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
     print("Loading ground truth ...")
@@ -465,7 +513,16 @@ def main():
         records = load_run(RESULTS_DIR / fname)
         print(f"  {len(records)} inference records.")
 
-        df = evaluate_run(records, gt, prompt_style)
+        pre_parsed_dict = None
+        if args.pre_parsed:
+            pp_path = GEMMA_PARSED_DIR / f"{run_name}_gemma.jsonl"
+            if pp_path.exists():
+                pre_parsed_dict = load_pre_parsed(pp_path)
+                print(f"  Pre-parsed: {len(pre_parsed_dict)} Gemma records loaded.")
+            else:
+                print(f"  Pre-parsed: {pp_path.name} not found, using regex fallback.")
+
+        df = evaluate_run(records, gt, prompt_style, pre_parsed_dict)
 
         csv_out = OUT_DIR / f"eval_{run_name}.csv"
         df.to_csv(csv_out, index=False)
