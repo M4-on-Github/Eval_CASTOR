@@ -43,10 +43,18 @@ def discover_runs(results_dir: Path) -> list:
             with open(path, encoding="utf-8") as f:
                 first_rec = json.loads(f.readline())
             text = first_rec.get("text", "")
-            if re.search(r'Step\s*[12]\s*[^\n]*\n', text, re.IGNORECASE):
+            if re.search(r'Step\s*[12]', text, re.IGNORECASE):
                 prompt_style = "cot"
         except Exception:
-            pass
+            # Fallback for /n-separator format (e.g. ministral outputs)
+            try:
+                recs = _load_slash_n_jsonl(path)
+                if recs:
+                    text = recs[0].get("text", "")
+                    if re.search(r'Step\s*[12]', text, re.IGNORECASE):
+                        prompt_style = "cot"
+            except Exception:
+                pass
 
         runs.append((fname, diffusion, prompt_style))
         print(f"  Discovered: {fname}  diffusion={diffusion}  prompt_style={prompt_style}")
@@ -93,6 +101,34 @@ def load_ground_truth(csv_path: Path) -> dict:
     return gt
 
 
+def _load_slash_n_jsonl(jsonl_path: Path) -> list:
+    """Fallback parser for files that use literal /n as record separator
+    (e.g. ministral3 outputs) instead of actual newlines."""
+    with open(jsonl_path, encoding="utf-8") as f:
+        content = f.read().rstrip()
+    if content.endswith("/n"):
+        content = content[:-2]
+    segments = content.split("}/n{")
+    if len(segments) <= 1:
+        return []
+    records = []
+    for i, seg in enumerate(segments):
+        if i == 0:
+            piece = seg + "}"
+        elif i < len(segments) - 1:
+            piece = "{" + seg + "}"
+        else:
+            piece = "{" + seg
+        piece = piece.replace("/n", r"\n")
+        try:
+            records.append(json.loads(piece))
+        except json.JSONDecodeError as e:
+            print(f"  WARNING: /n-format segment {i} in {jsonl_path.name}: {e}")
+    if records:
+        print(f"  Using /n-separator format: {len(records)} records.")
+    return records
+
+
 def load_run(jsonl_path: Path) -> list:
     records = []
     with open(jsonl_path, encoding="utf-8") as f:
@@ -107,6 +143,8 @@ def load_run(jsonl_path: Path) -> list:
                     records.append(json.loads(line, strict=False))
                 except json.JSONDecodeError as e:
                     print(f"  WARNING: could not parse line {lineno} in {jsonl_path.name}: {e}")
+    if not records:
+        records = _load_slash_n_jsonl(jsonl_path)
     return records
 
 
@@ -523,6 +561,10 @@ def main():
                 print(f"  Pre-parsed: {pp_path.name} not found, using regex fallback.")
 
         df = evaluate_run(records, gt, prompt_style, pre_parsed_dict)
+
+        if df.empty:
+            print("  No records evaluated — skipping.")
+            continue
 
         csv_out = OUT_DIR / f"eval_{run_name}.csv"
         df.to_csv(csv_out, index=False)

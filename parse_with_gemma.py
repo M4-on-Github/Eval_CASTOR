@@ -64,6 +64,32 @@ def discover_runs(results_dir: Path, filter_names: list = None) -> list:
     return runs
 
 
+def _load_slash_n_jsonl(jsonl_path: Path) -> list:
+    with open(jsonl_path, encoding="utf-8") as f:
+        content = f.read().rstrip()
+    if content.endswith("/n"):
+        content = content[:-2]
+    segments = content.split("}/n{")
+    if len(segments) <= 1:
+        return []
+    records = []
+    for i, seg in enumerate(segments):
+        if i == 0:
+            piece = seg + "}"
+        elif i < len(segments) - 1:
+            piece = "{" + seg + "}"
+        else:
+            piece = "{" + seg
+        piece = piece.replace("/n", r"\n")
+        try:
+            records.append(json.loads(piece))
+        except json.JSONDecodeError as e:
+            print(f"  WARNING: /n-format segment {i} in {jsonl_path.name}: {e}")
+    if records:
+        print(f"  Using /n-separator format: {len(records)} records.")
+    return records
+
+
 def load_run(jsonl_path: Path) -> list:
     records = []
     with open(jsonl_path, encoding="utf-8") as f:
@@ -77,6 +103,8 @@ def load_run(jsonl_path: Path) -> list:
                     records.append(json.loads(line, strict=False))
                 except json.JSONDecodeError as e:
                     print(f"  WARNING: could not parse line {lineno} in {jsonl_path.name}: {e}")
+    if not records:
+        records = _load_slash_n_jsonl(jsonl_path)
     return records
 
 
