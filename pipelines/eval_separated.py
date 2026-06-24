@@ -1,15 +1,16 @@
 """
-CASTOR Separated-Parts Evaluator
+CASTOR Separated-Parts Evaluator — Pipeline 4
+
 Evaluates inference runs where each field was prompted separately
 (one JSONL per field: state, vessel_type, size, cargo, ...).
 
 Records are joined across files by the 'image' key.
 No JSON/CoT extraction needed — text is a direct short answer per file.
 
-Outputs parallel to eval_castor.py for side-by-side comparison.
+Output -> results/p4_separated/
 
 Run from anywhere:
-    python DeGF/Eval_CASTOR/eval_castor_separated.py
+    python pipelines/eval_separated.py
 """
 
 import json
@@ -18,43 +19,33 @@ from pathlib import Path
 
 import pandas as pd
 
-# ---------------------------------------------------------------------------
-# Reuse shared functions from eval_castor.py (same directory)
-# ---------------------------------------------------------------------------
-HERE = Path(__file__).parent
-sys.path.insert(0, str(HERE))
+EVAL_ROOT   = Path(__file__).parent.parent
+sys.path.insert(0, str(EVAL_ROOT))
 
-from eval_castor import (  # noqa: E402
-    VALID_STATES,
-    load_ground_truth,
-    normalize_state,
-    normalize_size,
-    vessel_jaccard,
-    cargo_match,
-    per_state_report,
-    summary_row,
+from shared.loaders import load_ground_truth
+from shared.metrics import (
+    VALID_STATES, normalize_state, normalize_size,
+    vessel_jaccard, cargo_match, per_state_report, summary_row,
 )
 
-# ---------------------------------------------------------------------------
-# Paths
-# ---------------------------------------------------------------------------
-GT_PATH     = HERE / "human_ground_truth_label" / "human_gt.csv"
-RESULTS_DIR = HERE.parent.parent / "results" / "separated_into_parts"
-OUT_DIR     = HERE / "results"
+GT_PATH     = EVAL_ROOT / "human_ground_truth_label" / "human_gt.csv"
+RESULTS_IN  = EVAL_ROOT.parent.parent / "results" / "separated_into_parts"
+OUT_DIR     = EVAL_ROOT / "results" / "p4_separated"
+
 
 # ---------------------------------------------------------------------------
 # Discovery
 # ---------------------------------------------------------------------------
 
-def discover_separated_runs(castor_results_dir: Path) -> list:
-    """Find all separated_into_parts_* subdirectories."""
+def discover_runs(results_dir: Path) -> list:
     runs = []
-    for subdir in sorted(castor_results_dir.iterdir()):
+    for subdir in sorted(results_dir.iterdir()):
         if subdir.is_dir() and subdir.name.startswith("separated_into_parts_"):
             diffusion = "degf" in subdir.name.lower()
             runs.append((subdir, subdir.name, diffusion))
             print(f"  Discovered: {subdir.name}  diffusion={diffusion}")
     return runs
+
 
 # ---------------------------------------------------------------------------
 # Field loaders
@@ -87,7 +78,6 @@ def load_field_file(subdir: Path, pattern: str) -> dict:
 
 
 def load_timing_file(subdir: Path, pattern: str) -> dict:
-    """Load timing (infer_s) from first JSONL matching pattern. Returns {image -> float}."""
     matches = sorted(subdir.glob(pattern))
     if not matches:
         return {}
@@ -98,11 +88,12 @@ def load_timing_file(subdir: Path, pattern: str) -> dict:
             result[r["image"]] = r.get("timing", {}).get("infer_s")
     return result
 
+
 # ---------------------------------------------------------------------------
 # Core evaluation
 # ---------------------------------------------------------------------------
 
-def evaluate_separated_run(subdir: Path, gt_dict: dict) -> pd.DataFrame:
+def evaluate_run(subdir: Path, gt_dict: dict) -> pd.DataFrame:
     states  = load_field_file(subdir, "*_p1_*_state.jsonl")
     types   = load_field_file(subdir, "*_p2_*_type.jsonl")
     sizes   = load_field_file(subdir, "*_p3_*_size.jsonl")
@@ -110,8 +101,8 @@ def evaluate_separated_run(subdir: Path, gt_dict: dict) -> pd.DataFrame:
     timings = load_timing_file(subdir, "*_p1_*_state.jsonl")
 
     all_images = sorted(set(states) | set(types) | set(sizes) | set(cargoes))
-
     rows = []
+
     for img in all_images:
         gt = gt_dict.get(img, {})
 
@@ -139,7 +130,6 @@ def evaluate_separated_run(subdir: Path, gt_dict: dict) -> pd.DataFrame:
             "gt_state":         gt_state,
             "pred_state":       pred_state,
             "state_correct":    state_correct,
-            # Q columns — N/A for separated format (no Q prompts)
             "gt_q1": gt.get("q1"), "gt_q2": gt.get("q2"), "gt_q3": gt.get("q3"),
             "gt_q4": gt.get("q4"), "gt_q5": gt.get("q5"),
             "pred_q1": None, "pred_q2": None, "pred_q3": None,
@@ -158,6 +148,7 @@ def evaluate_separated_run(subdir: Path, gt_dict: dict) -> pd.DataFrame:
 
     return pd.DataFrame(rows)
 
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -169,8 +160,8 @@ def main():
     gt = load_ground_truth(GT_PATH)
     print(f"  {len(gt)} records.")
 
-    print(f"\nScanning {RESULTS_DIR} for separated runs ...")
-    runs = discover_separated_runs(RESULTS_DIR)
+    print(f"\nScanning {RESULTS_IN} ...")
+    runs = discover_runs(RESULTS_IN)
     if not runs:
         print("  No separated_into_parts_* directories found. Exiting.")
         return
@@ -183,16 +174,16 @@ def main():
         print(f"  Run: {run_name}")
         print(f"{'-'*60}")
 
-        df = evaluate_separated_run(subdir, gt)
+        df = evaluate_run(subdir, gt)
         print(f"  {len(df)} records evaluated.")
 
         if df.empty:
-            print("  No records found — skipping (directory may not have inference outputs yet).")
+            print("  No records found — skipping.")
             continue
 
         csv_out = OUT_DIR / f"eval_{run_name}.csv"
         df.to_csv(csv_out, index=False)
-        print(f"  Per-entry CSV  -> {csv_out.relative_to(HERE)}")
+        print(f"  Per-entry CSV  -> {csv_out.relative_to(EVAL_ROOT)}")
 
         report = per_state_report(df, run_name)
         print(report)
@@ -219,7 +210,7 @@ def main():
                 lines.append(f"[{row['gt_state']:8s}]  {row['image']}")
                 lines.append(f"           {row['parse_fail_reason']}")
             err_path.write_text("\n".join(lines), encoding="utf-8")
-            print(f"  Parse errors   -> {err_path.relative_to(HERE)}")
+            print(f"  Parse errors   -> {err_path.relative_to(EVAL_ROOT)}")
 
         summary_rows.append(summary_row(df, run_name, diffusion, "direct"))
 
@@ -228,27 +219,25 @@ def main():
     try:
         summary_df.to_csv(summary_csv, index=False)
     except PermissionError:
-        print(f"\n  WARNING: Could not write {summary_csv.name} — close it in Excel and re-run.")
+        print(f"\n  WARNING: Could not write {summary_csv.name}")
 
     SEP = "=" * 100
     print(f"\n{SEP}")
-    print("  HOLISTIC SUMMARY (SEPARATED FORMAT)")
+    print("  HOLISTIC SUMMARY (Pipeline 4 — Separated Format)")
     print(SEP)
     pd.set_option("display.max_columns", None)
     pd.set_option("display.width", 200)
     pd.set_option("display.float_format", "{:.1f}".format)
-
     key_cols = [
         "run", "diffusion", "prompt_style",
         "n_parsed", "parse_fail_%", "state_acc_%",
         "acc_aground_%", "acc_capsized_%", "acc_on_fire_%", "acc_sunken_%",
-        "macro_f1_%",
-        "size_bucket_acc_%", "mean_vessel_jaccard",
+        "macro_f1_%", "size_bucket_acc_%", "mean_vessel_jaccard",
         "mean_infer_s", "median_infer_s",
     ]
     key_cols = [c for c in key_cols if c in summary_df.columns]
     print(summary_df[key_cols].to_string(index=False))
-    print(f"\nSummary CSV -> {summary_csv.relative_to(HERE)}")
+    print(f"\nSummary CSV -> {summary_csv.relative_to(EVAL_ROOT)}")
 
 
 if __name__ == "__main__":

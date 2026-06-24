@@ -1,0 +1,285 @@
+"""
+Shared metric and extraction functions for CASTOR evaluation.
+Used by all four evaluation pipelines.
+"""
+
+import json
+import re
+
+import pandas as pd
+from sklearn.metrics import classification_report, f1_score
+
+VALID_STATES = ["aground", "capsized", "on_fire", "sunken"]
+
+STATE_MAP = {
+    "aground":   "aground",
+    "grounded":  "aground",
+    "beached":   "aground",
+    "sunken":    "sunken",
+    "sinking":   "sunken",
+    "capsized":  "capsized",
+    "on_fire":   "on_fire",
+    "on fire":   "on_fire",
+    "good":      "good",
+    "floating":  "good",
+    "undamaged": "good",
+}
+
+_UNESCAPE = re.compile(r'\\([_\-/])')
+
+
+def _safe_str(val) -> str:
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return ""
+    return str(val).strip()
+
+
+def _unescape(text: str) -> str:
+    return _UNESCAPE.sub(r'\1', text)
+
+
+# ---------------------------------------------------------------------------
+# Extraction helpers (regex-based, used by Pipeline 1)
+# ---------------------------------------------------------------------------
+
+def extract_json_block(text: str):
+    """Return (parsed_dict | None, failure_reason_str).
+
+    Scans brace positions in reverse. Prefers the outermost block containing a
+    'state' key; falls back to any valid dict; returns None on total failure.
+    """
+    text = _unescape(text)
+    positions = [m.start() for m in re.finditer(r'\{', text)]
+    if not positions:
+        return None, "no_braces: output text contains no '{' character"
+
+    errors, fallback, fallback_pos = [], None, None
+
+    for pos in reversed(positions):
+        chunk = text[pos:]
+        depth, end = 0, -1
+        for i, ch in enumerate(chunk):
+            if ch == '{':
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+                if depth == 0:
+                    end = i
+                    break
+
+        if end == -1:
+            errors.append(f"pos={pos}: unmatched braces")
+            continue
+
+        try:
+            parsed = json_loads_safe(chunk[:end + 1])
+            if not isinstance(parsed, dict):
+                errors.append(f"pos={pos}: top level is {type(parsed).__name__}")
+                continue
+            if 'state' in parsed:
+                return parsed, ""
+            if fallback is None:
+                fallback = parsed
+                fallback_pos = pos
+            errors.append(f"pos={pos}: no 'state' key (keys={list(parsed.keys())})")
+        except Exception as e:
+            errors.append(f"pos={pos}: {e}")
+
+    if fallback is not None:
+        return fallback, f"no_state_key: best JSON (pos={fallback_pos}) lacks 'state'"
+
+    summary = "; ".join(errors[:5])
+    if len(errors) > 5:
+        summary += f" ... (+{len(errors)-5} more)"
+    return None, f"all_attempts_failed [{len(errors)} blocks tried]: {summary}"
+
+
+def json_loads_safe(s: str):
+    """json.loads with strict=False retry."""
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        return json.loads(s, strict=False)
+
+
+def normalize_state(raw) -> str:
+    if raw is None:
+        return "UNPARSEABLE"
+    clean = re.sub(r'\\+', '', str(raw)).strip().lower().replace('_', ' ')
+    if clean in STATE_MAP:
+        return STATE_MAP[clean]
+    if '|' not in clean and '/' not in clean:
+        for key, val in STATE_MAP.items():
+            if key in clean:
+                return val
+    return "UNPARSEABLE"
+
+
+def extract_q_answers(text: str, prompt_style: str) -> dict:
+    """Extract Q1-Q5 yes/no answers from CoT text. Returns {q1..q5: str|None}."""
+    result = {f"q{i}": None for i in range(1, 6)}
+    if prompt_style != "cot":
+        return result
+
+    m = re.search(
+        r'Step\s*2\s*[^\n]*\n.*?(?=Step\s*3\s*[^\n]*\n|\Z)',
+        text, re.DOTALL | re.IGNORECASE
+    )
+    section = m.group(0) if m else text[:int(len(text) * 0.6)]
+
+    for qnum, answer in re.findall(r'Q(\d)\s*[=:][^\n]*(yes|no)', section, re.IGNORECASE):
+        key = f"q{qnum}"
+        if key in result and result[key] is None:
+            result[key] = answer.lower()
+
+    if any(v is None for v in result.values()):
+        for qnum, answer in re.findall(r'^\s*(\d)\.\s*(yes|no)\b', section, re.IGNORECASE | re.MULTILINE):
+            key = f"q{qnum}"
+            if key in result and result[key] is None:
+                result[key] = answer.lower()
+
+    if any(v is None for v in result.values()):
+        for qnum, answer in re.findall(r'Q(\d)[^\n]{0,120}?(yes|no)', section, re.IGNORECASE):
+            key = f"q{qnum}"
+            if key in result and result[key] is None:
+                result[key] = answer.lower()
+
+    return result
+
+
+def normalize_size(text: str) -> str:
+    t = text.lower() if text else ""
+    if re.search(r'\bsmall\b', t):
+        return "small"
+    if re.search(r'\bmedium\b', t):
+        return "medium"
+    if re.search(r'\blarge\b', t):
+        return "large"
+    return "unknown"
+
+
+def vessel_jaccard(gt_text: str, pred_text: str) -> float:
+    def tok(s):
+        return set(re.findall(r'[a-z]+', s.lower())) if s else set()
+    a, b = tok(gt_text), tok(pred_text)
+    if not a and not b:
+        return 1.0
+    if not a or not b:
+        return 0.0
+    return len(a & b) / len(a | b)
+
+
+def cargo_match(gt_cargo: str, pred_cargo) -> str:
+    null_vals = {"", "nan", "none", "null"}
+    gt_has   = gt_cargo.lower() not in null_vals
+    pc       = str(pred_cargo).lower() if pred_cargo is not None else ""
+    pred_has = pc not in null_vals
+    if gt_has and pred_has:
+        return "both_present"
+    if not gt_has and not pred_has:
+        return "both_absent"
+    return "mismatch"
+
+
+def gemma_val(v):
+    """Translate Gemma UNKNOWN sentinel → None so downstream treats it as absent."""
+    if v is None:
+        return None
+    s = str(v).strip()
+    return None if s.upper() == "UNKNOWN" else s
+
+
+# ---------------------------------------------------------------------------
+# Reporting
+# ---------------------------------------------------------------------------
+
+def per_state_report(df: pd.DataFrame, run_name: str) -> str:
+    SEP = "=" * 62
+    lines = [f"\n{SEP}", f"  PER-STATE REPORT: {run_name}", SEP]
+
+    for state in VALID_STATES:
+        sub = df[df["gt_state"] == state]
+        if sub.empty:
+            continue
+        n      = len(sub)
+        n_ok   = int(sub["state_correct"].sum())
+        n_fail = int(sub["parse_error"].sum())
+        acc    = n_ok / n * 100
+
+        pred_dist = sub["pred_state"].value_counts().to_dict()
+        lines.append(f"\n  [{state.upper()}]  n={n}  state_acc={acc:.1f}%  parse_fail={n_fail}")
+        lines.append(f"    Predicted distribution: {pred_dist}")
+
+        q_parts = []
+        for q in ["q1", "q2", "q3", "q4", "q5"]:
+            valid = sub[f"{q}_correct"].dropna()
+            if len(valid) > 0:
+                q_parts.append(f"{q}={valid.mean()*100:.0f}%")
+        lines.append(f"    Q-accuracy: {', '.join(q_parts) if q_parts else 'N/A (direct prompt)'}")
+        lines.append(
+            f"    size_bucket_acc={sub['size_correct'].mean()*100:.1f}%  "
+            f"vessel_jaccard={sub['vessel_jaccard'].mean():.3f}"
+        )
+
+    lines.append("\n  --- Classification Report (parsed records only) ---")
+    parsed = df[~df["parse_error"]]
+    if len(parsed) > 0:
+        y_true = parsed["gt_state"].tolist()
+        y_pred = [p if p in VALID_STATES else "UNPARSEABLE" for p in parsed["pred_state"]]
+        lines.append(classification_report(y_true, y_pred, labels=VALID_STATES, zero_division=0))
+    else:
+        lines.append("  No parsed records.")
+
+    return "\n".join(lines)
+
+
+def summary_row(df: pd.DataFrame, run_name: str, diffusion: bool, prompt_style: str) -> dict:
+    n        = len(df)
+    n_parsed = int((~df["parse_error"]).sum())
+    n_fail   = n - n_parsed
+
+    parsed = df[~df["parse_error"]]
+    y_true = parsed["gt_state"].tolist()
+    y_pred = [p if p in VALID_STATES else "UNPARSEABLE" for p in parsed["pred_state"]]
+
+    macro_f1, per_class_acc = None, {}
+    if y_true:
+        try:
+            macro_f1 = round(
+                f1_score(y_true, y_pred, labels=VALID_STATES, average="macro", zero_division=0) * 100, 1
+            )
+        except Exception:
+            pass
+        for state in VALID_STATES:
+            sub = df[df["gt_state"] == state]
+            per_class_acc[state] = round(sub["state_correct"].mean() * 100, 1) if len(sub) else None
+
+    q_accs = {}
+    for q in ["q1", "q2", "q3", "q4", "q5"]:
+        valid = df[f"{q}_correct"].dropna()
+        q_accs[q] = round(valid.mean() * 100, 1) if len(valid) > 0 else None
+
+    timing = df["infer_s"].dropna()
+    return {
+        "run":               run_name,
+        "diffusion":         diffusion,
+        "prompt_style":      prompt_style,
+        "n_records":         n,
+        "n_parsed":          n_parsed,
+        "parse_fail_%":      round(n_fail / n * 100, 1),
+        "state_acc_%":       round(df["state_correct"].mean() * 100, 1),
+        "acc_aground_%":     per_class_acc.get("aground"),
+        "acc_capsized_%":    per_class_acc.get("capsized"),
+        "acc_on_fire_%":     per_class_acc.get("on_fire"),
+        "acc_sunken_%":      per_class_acc.get("sunken"),
+        "macro_f1_%":        macro_f1,
+        "q1_acc_%":          q_accs["q1"],
+        "q2_acc_%":          q_accs["q2"],
+        "q3_acc_%":          q_accs["q3"],
+        "q4_acc_%":          q_accs["q4"],
+        "q5_acc_%":          q_accs["q5"],
+        "size_bucket_acc_%": round(df["size_correct"].mean() * 100, 1),
+        "mean_vessel_jaccard": round(df["vessel_jaccard"].mean(), 3),
+        "mean_infer_s":      round(timing.mean(), 2) if len(timing) else None,
+        "median_infer_s":    round(timing.median(), 2) if len(timing) else None,
+    }
