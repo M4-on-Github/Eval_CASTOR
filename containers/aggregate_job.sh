@@ -54,22 +54,24 @@ if [ ! -f "$CONSENSUS_FILE" ]; then
     exit 1
 fi
 
+# Export shell vars so the Python here-doc can reach them via os.environ.
+# (Single-quoted heredoc does not expand shell variables, so we pass via env.)
+export REPO RUN_NAME
 python3 - <<'PYEOF'
 import sys, os
 from pathlib import Path
 
-repo      = Path(os.environ["SLURM_SUBMIT_DIR"]) if "SLURM_SUBMIT_DIR" in os.environ \
-            else Path(__file__).parent.parent
+repo     = Path(os.environ["REPO"])
+run_name = os.environ["RUN_NAME"]
 sys.path.insert(0, str(repo))
 
 import pandas as pd
 from shared.metrics import panel_score_summary
 
-data_dir     = Path(f"/data/{os.environ['USER']}")
-run_name     = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("RUN_NAME", "")
-judge_dir    = data_dir / "castor_results" / "p5_judge" / run_name
-consensus_p  = judge_dir / f"{run_name}_consensus.jsonl"
-summary_csv  = judge_dir.parent / "eval_summary_judge.csv"
+data_dir    = Path(f"/data/{os.environ['USER']}")
+judge_dir   = data_dir / "castor_results" / "p5_judge" / run_name
+consensus_p = judge_dir / f"{run_name}_consensus.jsonl"
+summary_csv = judge_dir.parent / "eval_summary_judge.csv"
 
 row = panel_score_summary(consensus_p, run_name)
 
