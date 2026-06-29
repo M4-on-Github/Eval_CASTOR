@@ -320,6 +320,45 @@ def confusion_matrix_report(df: pd.DataFrame, run_name: str) -> str:
     return "\n".join(lines)
 
 
+def panel_score_summary(consensus_path, run_name: str) -> dict:
+    """Summarize a consensus JSONL from Pipeline 5 into one CSV row."""
+    import json as _json
+    records = []
+    with open(consensus_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                try:
+                    records.append(_json.loads(line))
+                except _json.JSONDecodeError:
+                    pass
+    if not records:
+        return {"run": run_name}
+
+    valid = [r for r in records if r.get("mean_score") is not None]
+    n_flagged = sum(1 for r in records if r.get("consensus_status") == "flagged_for_review")
+    n_error   = sum(1 for r in records if r.get("consensus_status") == "parse_error")
+
+    per_class = {}
+    for state in VALID_STATES:
+        subset = [r["mean_score"] for r in valid if r.get("gt_state") == state]
+        per_class[state] = round(sum(subset) / len(subset), 3) if subset else None
+
+    return {
+        "run":              run_name,
+        "n_records":        len(records),
+        "n_valid":          len(valid),
+        "n_flagged":        n_flagged,
+        "flagged_%":        round(n_flagged / len(records) * 100, 1) if records else None,
+        "n_parse_error":    n_error,
+        "mean_score":       round(sum(r["mean_score"] for r in valid) / len(valid), 3) if valid else None,
+        "mean_score_aground":  per_class.get("aground"),
+        "mean_score_capsized": per_class.get("capsized"),
+        "mean_score_on_fire":  per_class.get("on_fire"),
+        "mean_score_sunken":   per_class.get("sunken"),
+    }
+
+
 def summary_row(df: pd.DataFrame, run_name: str, diffusion: bool, prompt_style: str) -> dict:
     n        = len(df)
     n_parsed = int((~df["parse_error"]).sum())
