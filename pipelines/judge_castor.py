@@ -40,7 +40,7 @@ from shared.metrics import VALID_STATES
 from shared.ollama  import call_ollama
 
 GT_PATH    = EVAL_ROOT / "human_ground_truth_label" / "human_gt.csv"
-RESULTS_IN = EVAL_ROOT.parent.parent / "results" / "castor_results"
+RESULTS_IN = EVAL_ROOT.parent / "results" / "castor_results"
 GEMMA_DIR  = EVAL_ROOT / "results" / "p2_llm_extract" / "extracted"
 OUT_DIR    = EVAL_ROOT / "results" / "p3_llm_judge"
 
@@ -329,6 +329,90 @@ def judge_report(df: pd.DataFrame, run_name: str) -> str:
     return "\n".join(lines)
 
 
+def judge_class_breakdown(df: pd.DataFrame, run_name: str) -> str:
+    """Per-GT-class correct/incorrect table for P3.
+
+    P3 verdicts store True/False for each field — the judge does not record
+    the actual predicted label, so a full confusion matrix (GT x pred) is not
+    possible. This table is the closest equivalent: for each GT class, how many
+    images did the judge mark state-correct vs state-incorrect.
+    """
+    SEP  = "=" * 72
+    SEP2 = "-" * 72
+    BAR_W = 32
+
+    lines = [f"\n{SEP}", f"  JUDGE CLASS BREAKDOWN: {run_name}", SEP]
+    lines.append("\n  Note: P3 verdicts are correct/incorrect only — predicted")
+    lines.append("  labels are not recorded, so a full confusion matrix is not available.\n")
+
+    # Summary table
+    LW, CW = 12, 12
+    lines.append(
+        "  " + f"{'':>{LW}}" +
+        f"{'n':>{CW}}" + f"{'correct':>{CW}}" + f"{'incorrect':>{CW}}" + f"{'acc':>{CW}}"
+    )
+    lines.append("  " + SEP2)
+
+    total_n = total_ok = 0
+    for state in VALID_STATES:
+        sub = df[df["gt_state"] == state]
+        n    = len(sub)
+        n_ok = int(sub["judge_state"].sum()) if "judge_state" in sub.columns and n > 0 else 0
+        acc  = n_ok / n * 100 if n > 0 else 0.0
+        total_n  += n
+        total_ok += n_ok
+        lines.append(
+            "  " + f"{state:>{LW}}" +
+            f"{n:>{CW}}" + f"{n_ok:>{CW}}" + f"{n - n_ok:>{CW}}" +
+            f"{acc:>{CW-1}.1f}%"
+        )
+
+    lines.append("  " + SEP2)
+    overall_acc = total_ok / total_n * 100 if total_n > 0 else 0.0
+    lines.append(
+        "  " + f"{'Total':>{LW}}" +
+        f"{total_n:>{CW}}" + f"{total_ok:>{CW}}" + f"{total_n - total_ok:>{CW}}" +
+        f"{overall_acc:>{CW-1}.1f}%"
+    )
+
+    # Per-folder bars
+    lines.append(f"\n{SEP}")
+    lines.append("  PER-FOLDER DETAIL")
+    lines.append(SEP)
+
+    for state in VALID_STATES:
+        sub  = df[df["gt_state"] == state]
+        n    = len(sub)
+        if n == 0:
+            continue
+        n_ok   = int(sub["judge_state"].sum()) if "judge_state" in sub.columns else 0
+        n_fail = n - n_ok
+        acc    = n_ok / n * 100
+
+        filled_ok   = round(acc / 100 * BAR_W)
+        filled_fail = BAR_W - filled_ok
+        bar_ok   = "#" * filled_ok   + "." * filled_fail
+        bar_fail = "#" * filled_fail + "." * filled_ok
+
+        lines.append(f"\n  [{state.upper()}]  n={n}  acc={acc:.1f}%")
+        lines.append(f"    correct   : {n_ok:>4}  ({acc:>5.1f}%)  [{bar_ok}]")
+        lines.append(f"    incorrect : {n_fail:>4}  ({100-acc:>5.1f}%)  [{bar_fail}]")
+
+        # Per-field breakdown for this class
+        for field in ["vessel_type", "size_estimate", "cargo"] + [f"q{i}" for i in range(1, 6)]:
+            col = f"judge_{field}"
+            if col not in sub.columns:
+                continue
+            f_ok  = int(sub[col].sum())
+            f_pct = f_ok / n * 100
+            f_filled = round(f_pct / 100 * BAR_W)
+            f_bar = "#" * f_filled + "." * (BAR_W - f_filled)
+            lines.append(f"    {field:<15}: {f_ok:>4}  ({f_pct:>5.1f}%)  [{f_bar}]")
+
+    lines.append("")
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -386,6 +470,11 @@ def main():
         print(report_txt)
         (OUT_DIR / f"judge_report_{run_name}.txt").write_text(report_txt, encoding="utf-8")
 
+        breakdown = judge_class_breakdown(df, run_name)
+        print(breakdown)
+        (OUT_DIR / f"judge_breakdown_{run_name}.txt").write_text(breakdown, encoding="utf-8")
+        print(f"  Class breakdown -> {(OUT_DIR / f'judge_breakdown_{run_name}.txt').relative_to(EVAL_ROOT)}")
+
         summary_rows.append(judge_summary_row(df, run_name, diffusion, n_records))
 
     if not summary_rows:
@@ -400,9 +489,6 @@ def main():
         print(f"\n  WARNING: Could not write {summary_csv.name}")
 
     SEP = "=" * 110
-    print(f"\n{SEP}")
-    print("  JUDGE SUMMARY (Pipeline 3)")
-    print(SEP)
     pd.set_option("display.max_columns", None)
     pd.set_option("display.width", 220)
     pd.set_option("display.float_format", "{:.1f}".format)
@@ -416,8 +502,14 @@ def main():
         "judge_all_fields_%",
     ]
     key_cols = [c for c in key_cols if c in summary_df.columns]
-    print(summary_df[key_cols].to_string(index=False))
-    print(f"\nSummary CSV -> {summary_csv.relative_to(EVAL_ROOT)}")
+    table = summary_df[key_cols].to_string(index=False)
+    report_lines = [f"\n{SEP}", "  JUDGE SUMMARY (Pipeline 3)", SEP, "", table, ""]
+    report_str = "\n".join(report_lines)
+    print(report_str)
+    summary_report = OUT_DIR / "judge_summary_report.txt"
+    summary_report.write_text(report_str, encoding="utf-8")
+    print(f"Summary CSV    -> {summary_csv.relative_to(EVAL_ROOT)}")
+    print(f"Summary report -> {summary_report.relative_to(EVAL_ROOT)}")
 
 
 if __name__ == "__main__":

@@ -233,6 +233,93 @@ def per_state_report(df: pd.DataFrame, run_name: str) -> str:
     return "\n".join(lines)
 
 
+def confusion_matrix_report(df: pd.DataFrame, run_name: str) -> str:
+    """
+    Returns a formatted string with:
+      1. Overall confusion matrix (counts + row %)
+      2. Per-folder (per GT class) breakdown with ASCII bar charts
+    """
+    # Columns = every label the model actually produced, in a stable order:
+    #   VALID_STATES (defined order) → any other predicted labels (sorted) → UNPARSEABLE last
+    pred = df["pred_state"].fillna("UNPARSEABLE")
+    extra = sorted(pred.unique().tolist())
+    LABELS = (
+        [s for s in VALID_STATES if s in extra]
+        + [s for s in extra if s not in VALID_STATES and s != "UNPARSEABLE"]
+        + (["UNPARSEABLE"] if "UNPARSEABLE" in extra else [])
+    )
+
+    SEP  = "=" * max(72, 12 + 13 * len(LABELS))
+    SEP2 = "-" * max(72, 12 + 13 * len(LABELS))
+
+    # Build count dict: counts[gt_state][pred_label]
+    counts = {}
+    for gt in VALID_STATES:
+        mask = df["gt_state"] == gt
+        vc   = pred[mask].value_counts()
+        counts[gt] = {lbl: int(vc.get(lbl, 0)) for lbl in LABELS}
+
+    row_totals = {gt: sum(counts[gt].values()) for gt in VALID_STATES}
+    col_totals = {lbl: sum(counts[gt][lbl] for gt in VALID_STATES) for lbl in LABELS}
+    grand_total = sum(row_totals.values())
+
+    # ── Overall matrix ────────────────────────────────────────────────────────
+    LW, CW = 12, 13   # label width, column width (CW >= len("UNPARSEABLE")+2)
+    lines = [f"\n{SEP}", f"  CONFUSION MATRIX: {run_name}", SEP]
+    lines.append("\n  Rows = Ground Truth      Columns = Predicted\n")
+
+    # Header row
+    hdr = f"{'':>{LW}}" + "".join(f"{lbl:>{CW}}" for lbl in LABELS) + f"{'Total':>{CW}}"
+    lines.append("  " + hdr)
+    lines.append("  " + SEP2)
+
+    # Count rows
+    for gt in VALID_STATES:
+        row = f"{gt:>{LW}}" + "".join(f"{counts[gt][lbl]:>{CW}}" for lbl in LABELS) + f"{row_totals[gt]:>{CW}}"
+        lines.append("  " + row)
+
+    # Column totals
+    lines.append("  " + SEP2)
+    tot = f"{'Total':>{LW}}" + "".join(f"{col_totals[lbl]:>{CW}}" for lbl in LABELS) + f"{grand_total:>{CW}}"
+    lines.append("  " + tot)
+
+    # Row-% table
+    lines.append("\n  Row %  (what each GT class was predicted as):\n")
+    lines.append("  " + f"{'':>{LW}}" + "".join(f"{lbl:>{CW}}" for lbl in LABELS))
+    lines.append("  " + SEP2)
+    for gt in VALID_STATES:
+        n = row_totals[gt]
+        pcts = []
+        for lbl in LABELS:
+            if n > 0:
+                pcts.append(f"{counts[gt][lbl]/n*100:>{CW-1}.1f}%")
+            else:
+                pcts.append(f"{'N/A':>{CW}}")
+        lines.append("  " + f"{gt:>{LW}}" + "".join(pcts))
+
+    # ── Per-folder detail ─────────────────────────────────────────────────────
+    lines.append(f"\n{SEP}")
+    lines.append("  PER-FOLDER DETAIL")
+    lines.append(SEP)
+
+    BAR_W = 32
+    for gt in VALID_STATES:
+        n       = row_totals[gt]
+        n_right = counts[gt].get(gt, 0)  # 0 if that label never appeared as a prediction
+        acc     = n_right / n * 100 if n > 0 else 0.0
+        lines.append(f"\n  [{gt.upper()}]  n={n}  acc={acc:.1f}%")
+        for lbl in LABELS:
+            c      = counts[gt][lbl]
+            pct    = c / n * 100 if n > 0 else 0.0
+            filled = round(pct / 100 * BAR_W)
+            bar    = "#" * filled + "." * (BAR_W - filled)
+            mark   = " <- correct" if lbl == gt else ""
+            lines.append(f"    {lbl:<13}: {c:>4}  ({pct:>5.1f}%)  [{bar}]{mark}")
+
+    lines.append("")
+    return "\n".join(lines)
+
+
 def summary_row(df: pd.DataFrame, run_name: str, diffusion: bool, prompt_style: str) -> dict:
     n        = len(df)
     n_parsed = int((~df["parse_error"]).sum())

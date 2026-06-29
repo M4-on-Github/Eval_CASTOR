@@ -28,11 +28,11 @@ from shared.loaders  import load_ground_truth, load_run, load_pre_parsed, _safe_
 from shared.metrics  import (
     VALID_STATES, extract_json_block, normalize_state, extract_q_answers,
     normalize_size, vessel_jaccard, cargo_match, gemma_val,
-    per_state_report, summary_row,
+    per_state_report, confusion_matrix_report, summary_row,
 )
 
 GT_PATH     = EVAL_ROOT / "human_ground_truth_label" / "human_gt.csv"
-RESULTS_IN  = EVAL_ROOT.parent.parent / "results" / "castor_results"
+RESULTS_IN  = EVAL_ROOT.parent / "results" / "castor_results"
 
 
 # ---------------------------------------------------------------------------
@@ -177,6 +177,8 @@ def main():
     print(f"  {len(runs)} run(s) found.\n")
 
     summary_rows = []
+    confusion_matrices = []
+    all_dfs = []
 
     for fname, diffusion, prompt_style in runs:
         run_name = fname.replace(".jsonl", "")
@@ -209,6 +211,13 @@ def main():
         report = per_state_report(df, run_name)
         print(report)
         (OUT_DIR / f"eval_{run_name}_report.txt").write_text(report, encoding="utf-8")
+
+        cm = confusion_matrix_report(df, run_name)
+        print(cm)
+        (OUT_DIR / f"eval_{run_name}_confusion.txt").write_text(cm, encoding="utf-8")
+        print(f"  Confusion matrix -> {(OUT_DIR / f'eval_{run_name}_confusion.txt').relative_to(EVAL_ROOT)}")
+        confusion_matrices.append(cm)
+        all_dfs.append(df)
 
         failures = df[df["parse_error"]][["image", "gt_state", "parse_fail_reason"]]
         if not failures.empty:
@@ -243,9 +252,6 @@ def main():
         print(f"\n  WARNING: Could not write {summary_csv.name} — close it in Excel and re-run.")
 
     SEP = "=" * 100
-    print(f"\n{SEP}")
-    print(f"  HOLISTIC SUMMARY  [{pipeline}]")
-    print(SEP)
     pd.set_option("display.max_columns", None)
     pd.set_option("display.width", 200)
     pd.set_option("display.float_format", "{:.1f}".format)
@@ -259,8 +265,21 @@ def main():
         "mean_infer_s", "median_infer_s",
     ]
     key_cols = [c for c in key_cols if c in summary_df.columns]
-    print(summary_df[key_cols].to_string(index=False))
-    print(f"\nSummary CSV -> {summary_csv.relative_to(EVAL_ROOT)}")
+    table = summary_df[key_cols].to_string(index=False)
+    print(f"\n{SEP}")
+    print(f"  HOLISTIC SUMMARY  [{pipeline}]")
+    print(SEP)
+    print(table)
+    combined_cm = confusion_matrix_report(
+        pd.concat(all_dfs, ignore_index=True), "ALL RUNS COMBINED"
+    ) if all_dfs else ""
+    summary_report = OUT_DIR / "eval_summary_report.txt"
+    summary_report.write_text(
+        "\n\n".join(confusion_matrices) + ("\n\n" + combined_cm if combined_cm else ""),
+        encoding="utf-8",
+    )
+    print(f"Summary CSV    -> {summary_csv.relative_to(EVAL_ROOT)}")
+    print(f"Summary report -> {summary_report.relative_to(EVAL_ROOT)}")
 
 
 if __name__ == "__main__":

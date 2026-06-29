@@ -25,11 +25,11 @@ sys.path.insert(0, str(EVAL_ROOT))
 from shared.loaders import load_ground_truth
 from shared.metrics import (
     VALID_STATES, normalize_state, normalize_size,
-    vessel_jaccard, cargo_match, per_state_report, summary_row,
+    vessel_jaccard, cargo_match, per_state_report, confusion_matrix_report, summary_row,
 )
 
 GT_PATH     = EVAL_ROOT / "human_ground_truth_label" / "human_gt.csv"
-RESULTS_IN  = EVAL_ROOT.parent.parent / "results" / "separated_into_parts"
+RESULTS_IN  = EVAL_ROOT.parent / "results" / "separated_into_parts"
 OUT_DIR     = EVAL_ROOT / "results" / "p4_separated"
 
 
@@ -38,9 +38,16 @@ OUT_DIR     = EVAL_ROOT / "results" / "p4_separated"
 # ---------------------------------------------------------------------------
 
 def discover_runs(results_dir: Path) -> list:
+    if not results_dir.exists():
+        print(f"  Directory not found: {results_dir}")
+        return []
     runs = []
     for subdir in sorted(results_dir.iterdir()):
-        if subdir.is_dir() and subdir.name.startswith("separated_into_parts_"):
+        # Accept both correct spelling and the historical typo ("separeted_")
+        if subdir.is_dir() and (
+            subdir.name.startswith("separated_into_parts_") or
+            subdir.name.startswith("separeted_into_parts_")
+        ):
             diffusion = "degf" in subdir.name.lower()
             runs.append((subdir, subdir.name, diffusion))
             print(f"  Discovered: {subdir.name}  diffusion={diffusion}")
@@ -67,26 +74,28 @@ def _load_jsonl_lines(path: Path) -> list:
     return records
 
 
-def load_field_file(subdir: Path, pattern: str) -> dict:
-    """Load first JSONL matching pattern. Returns {image -> text}."""
-    matches = sorted(subdir.glob(pattern))
-    if not matches:
-        print(f"  WARNING: no file matching '{pattern}' in {subdir.name}")
-        return {}
-    recs = _load_jsonl_lines(matches[0])
-    return {r["image"]: r["text"] for r in recs if "image" in r and "text" in r}
+def load_field_file(subdir: Path, *patterns: str) -> dict:
+    """Load first JSONL matching any of the patterns. Returns {image -> text}."""
+    for pattern in patterns:
+        matches = sorted(subdir.glob(pattern))
+        if matches:
+            recs = _load_jsonl_lines(matches[0])
+            return {r["image"]: r["text"] for r in recs if "image" in r and "text" in r}
+    print(f"  WARNING: no file matching {patterns} in {subdir.name}")
+    return {}
 
 
-def load_timing_file(subdir: Path, pattern: str) -> dict:
-    matches = sorted(subdir.glob(pattern))
-    if not matches:
-        return {}
-    recs = _load_jsonl_lines(matches[0])
-    result = {}
-    for r in recs:
-        if "image" in r:
-            result[r["image"]] = r.get("timing", {}).get("infer_s")
-    return result
+def load_timing_file(subdir: Path, *patterns: str) -> dict:
+    for pattern in patterns:
+        matches = sorted(subdir.glob(pattern))
+        if matches:
+            recs = _load_jsonl_lines(matches[0])
+            result = {}
+            for r in recs:
+                if "image" in r:
+                    result[r["image"]] = r.get("timing", {}).get("infer_s")
+            return result
+    return {}
 
 
 # ---------------------------------------------------------------------------
@@ -94,11 +103,14 @@ def load_timing_file(subdir: Path, pattern: str) -> dict:
 # ---------------------------------------------------------------------------
 
 def evaluate_run(subdir: Path, gt_dict: dict) -> pd.DataFrame:
-    states  = load_field_file(subdir, "*_p1_*_state.jsonl")
-    types   = load_field_file(subdir, "*_p2_*_type.jsonl")
-    sizes   = load_field_file(subdir, "*_p3_*_size.jsonl")
-    cargoes = load_field_file(subdir, "*_p4_*_cargo.jsonl")
-    timings = load_timing_file(subdir, "*_p1_*_state.jsonl")
+    # Two naming conventions:
+    #   LLaVA: answers_baseline_p1_1_state.jsonl
+    #   QWEN:  answers_qwen3vl8b_baseline_1_state_j932.jsonl
+    states  = load_field_file(subdir, "*_p1_*_state.jsonl", "*_1_state*.jsonl")
+    types   = load_field_file(subdir, "*_p2_*_type.jsonl",  "*_2_type*.jsonl")
+    sizes   = load_field_file(subdir, "*_p3_*_size.jsonl",  "*_3_size*.jsonl")
+    cargoes = load_field_file(subdir, "*_p4_*_cargo.jsonl", "*_4_cargo*.jsonl")
+    timings = load_timing_file(subdir, "*_p1_*_state.jsonl", "*_1_state*.jsonl")
 
     all_images = sorted(set(states) | set(types) | set(sizes) | set(cargoes))
     rows = []
@@ -168,6 +180,8 @@ def main():
     print(f"  {len(runs)} run(s) found.\n")
 
     summary_rows = []
+    confusion_matrices = []
+    all_dfs = []
 
     for subdir, run_name, diffusion in runs:
         print(f"\n{'-'*60}")
@@ -188,6 +202,13 @@ def main():
         report = per_state_report(df, run_name)
         print(report)
         (OUT_DIR / f"eval_{run_name}_report.txt").write_text(report, encoding="utf-8")
+
+        cm = confusion_matrix_report(df, run_name)
+        print(cm)
+        (OUT_DIR / f"eval_{run_name}_confusion.txt").write_text(cm, encoding="utf-8")
+        print(f"  Confusion matrix -> {(OUT_DIR / f'eval_{run_name}_confusion.txt').relative_to(EVAL_ROOT)}")
+        confusion_matrices.append(cm)
+        all_dfs.append(df)
 
         failures = df[df["parse_error"]][["image", "gt_state", "parse_fail_reason"]]
         if not failures.empty:
@@ -222,9 +243,6 @@ def main():
         print(f"\n  WARNING: Could not write {summary_csv.name}")
 
     SEP = "=" * 100
-    print(f"\n{SEP}")
-    print("  HOLISTIC SUMMARY (Pipeline 4 — Separated Format)")
-    print(SEP)
     pd.set_option("display.max_columns", None)
     pd.set_option("display.width", 200)
     pd.set_option("display.float_format", "{:.1f}".format)
@@ -236,8 +254,21 @@ def main():
         "mean_infer_s", "median_infer_s",
     ]
     key_cols = [c for c in key_cols if c in summary_df.columns]
-    print(summary_df[key_cols].to_string(index=False))
-    print(f"\nSummary CSV -> {summary_csv.relative_to(EVAL_ROOT)}")
+    table = summary_df[key_cols].to_string(index=False)
+    print(f"\n{SEP}")
+    print("  HOLISTIC SUMMARY (Pipeline 4 — Separated Format)")
+    print(SEP)
+    print(table)
+    combined_cm = confusion_matrix_report(
+        pd.concat(all_dfs, ignore_index=True), "ALL RUNS COMBINED"
+    ) if all_dfs else ""
+    summary_report = OUT_DIR / "eval_summary_separated_report.txt"
+    summary_report.write_text(
+        "\n\n".join(confusion_matrices) + ("\n\n" + combined_cm if combined_cm else ""),
+        encoding="utf-8",
+    )
+    print(f"Summary CSV    -> {summary_csv.relative_to(EVAL_ROOT)}")
+    print(f"Summary report -> {summary_report.relative_to(EVAL_ROOT)}")
 
 
 if __name__ == "__main__":
