@@ -1,0 +1,15 @@
+GROUND TRUTH:
+  state:         {gt_state}
+  vessel_type:   {gt_vessel_type}
+  size_estimate: {gt_size_estimate}
+  cargo:         {gt_cargo}
+
+VLM OUTPUT:
+{pred_text}
+
+Evaluate the VLM output against the ground truth. Output valid JSON only:
+{{
+  "visual_alignment_rationale": "<detailed analysis>",
+  "hallucinations_detected": ["<item>", ...],
+  "final_score": <1|2|3>
+}}
