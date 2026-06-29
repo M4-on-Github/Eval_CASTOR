@@ -1,14 +1,18 @@
 """
 CASTOR Evaluator — Pipeline 5 (LLM-as-a-Judge Panel)
 
-Runs all three judge models sequentially (local/Ollama mode) over one CASTOR
-inference JSONL, then aggregates into a consensus file.
+Sequential runner for interactive use on a pleiades GPU node. Runs all three
+judge models one at a time (using vLLM, inside the Apptainer container), then
+aggregates into a consensus file.
 
-For cluster use (parallel), submit via judge_panel/submit_judges.sh instead.
+For parallel cluster submission (recommended), use containers/submit_judges.sh.
 
-Usage:
-    python pipelines/eval_judge_panel.py --run answers_baseline [--limit 10]
-    python pipelines/eval_judge_panel.py --run answers_baseline --backend apptainer
+Usage (inside the container on a GPU node):
+    python3 pipelines/eval_judge_panel.py --run answers_baseline [--limit 10]
+
+    # With explicit model-dir (defaults to /data/$USER/<model_dir>):
+    python3 pipelines/eval_judge_panel.py --run answers_baseline \\
+        --model-dir-base /data/myuser
 """
 
 import argparse
@@ -21,7 +25,7 @@ import pandas as pd
 EVAL_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(EVAL_ROOT))
 
-from pipelines.judge_panel.run_judge import run as run_judge
+from pipelines.judge_panel.run_judge import run as run_judge, _MODEL_CONFIG
 from pipelines.judge_panel.aggregate import aggregate_run, JUDGE_MODELS
 from shared.metrics import panel_score_summary
 
@@ -32,14 +36,13 @@ OUT_BASE   = EVAL_ROOT / "results" / "p5_judge"
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Pipeline 5: run all three judges + aggregate (local sequential mode)."
+        description="Pipeline 5: run all three judges sequentially + aggregate."
     )
-    ap.add_argument("--run",          required=True, help="Inference run name (no .jsonl)")
-    ap.add_argument("--backend",      default="ollama", choices=["ollama", "apptainer"])
-    ap.add_argument("--ollama-model", default="qwen2.5:7b")
-    ap.add_argument("--ollama-url",
-                    default=os.environ.get("OLLAMA_HOST", "http://localhost:11434") + "/api/chat")
-    ap.add_argument("--limit",        type=int, default=None,
+    ap.add_argument("--run",            required=True, help="Inference run name (no .jsonl)")
+    ap.add_argument("--model-dir-base", default=f"/data/{os.environ.get('USER', 'user')}",
+                    help="Base directory containing model weight subdirs "
+                         "(default: /data/$USER)")
+    ap.add_argument("--limit",          type=int, default=None,
                     help="Process only first N records (smoke test)")
     args = ap.parse_args()
 
@@ -51,27 +54,32 @@ def main():
     out_dir = OUT_BASE / args.run
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"\nPipeline 5 — LLM-as-a-Judge Panel")
-    print(f"  Run      : {args.run}")
-    print(f"  Input    : {input_path}")
-    print(f"  Backend  : {args.backend}")
-    print(f"  Output   : {out_dir}")
+    print(f"\nPipeline 5 — LLM-as-a-Judge Panel (sequential)")
+    print(f"  Run           : {args.run}")
+    print(f"  Input         : {input_path}")
+    print(f"  Model-dir base: {args.model_dir_base}")
+    print(f"  Output        : {out_dir}")
     if args.limit:
-        print(f"  Limit    : {args.limit} records (smoke test)")
+        print(f"  Limit         : {args.limit} records (smoke test)")
 
     # ── Phase 1: run each judge model sequentially ────────────────────────────
     for model in JUDGE_MODELS:
+        cfg       = _MODEL_CONFIG[model]
+        model_dir = f"{args.model_dir_base}/{cfg['dir']}"
+        tp_size   = cfg["tp"]
+
         print(f"\n{'─'*60}")
-        print(f"  Judge: {model}")
+        print(f"  Judge     : {model}")
+        print(f"  Model dir : {model_dir}  (tp={tp_size})")
         print(f"{'─'*60}")
+
         run_judge(
             input_path=input_path,
             gt_path=GT_PATH,
             out_dir=out_dir,
             model=model,
-            backend=args.backend,
-            ollama_model=args.ollama_model,
-            ollama_url=args.ollama_url,
+            model_dir=model_dir,
+            tp_size=tp_size,
             limit=args.limit,
         )
 
@@ -88,8 +96,7 @@ def main():
     existing_runs = set()
     if summary_csv.exists():
         try:
-            existing = pd.read_csv(summary_csv)
-            existing_runs = set(existing["run"].tolist())
+            existing_runs = set(pd.read_csv(summary_csv)["run"].tolist())
         except Exception:
             pass
 
