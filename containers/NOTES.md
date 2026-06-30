@@ -15,13 +15,9 @@ fit on 1 GPU). Model dirs and HF repo IDs updated accordingly.
 
 ## GPT-OSS 120B — unrecognized architecture in vLLM 0.5.5
 
-Error: `KeyError: 'gpt_oss'` — transformers does not recognize `model_type: gpt_oss`
-and the model repo does not register it via `auto_map` for trust_remote_code.
+Error: `KeyError: 'gpt_oss'` — transformers does not recognize `model_type: gpt_oss`.
+Root cause: vLLM 0.5.5 bundles a transformers version that doesn't have `gpt_oss`
+in its `CONFIG_MAPPING`, and the model repo apparently lacks an `auto_map` entry.
 
-vLLM 0.5.5 cannot load this model. Options:
-1. Rebuild the container with a newer vLLM version that adds gpt_oss support.
-2. Replace the anchor judge with a different model (e.g., `meta-llama/Llama-3.1-70B-Instruct`).
-
-Until resolved, `gptoss_120b` is skipped in `build_judge_container.sh` and the
-panel runs with two judges (Qwen + DeepSeek). Aggregation still works — partial
-scores are handled by `compute_consensus()` (nulls excluded from mean).
+**Fix applied (2026-06-30):** bumped container base to `vllm/vllm-openai:v0.6.3`.
+Rebuild the SIF with `build_judge_container.sh --force` and resubmit.

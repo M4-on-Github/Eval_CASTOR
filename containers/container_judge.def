@@ -1,5 +1,5 @@
 Bootstrap: docker
-From: vllm/vllm-openai:v0.5.5
+From: vllm/vllm-openai:v0.6.3
 
 # Base image provides: Python 3.10, CUDA 12.1, vLLM 0.5.5, torch 2.3.1.
 # We add only the lightweight packages needed by run_judge.py and the
@@ -42,8 +42,8 @@ print('OK')
 
 %labels
     Project      CASTOR_JUDGE_PANEL
-    Base         vllm/vllm-openai:v0.5.5
-    vLLM         0.5.5
+    Base         vllm/vllm-openai:v0.6.3
+    vLLM         0.6.3
     CUDA         12.1
     Models       Qwen2.5-72B-Instruct / DeepSeek-R1-Distill-Llama-70B / gpt-oss-120b
     Use          apptainer exec --containall --nv --bind /data/$USER:/data/$USER
