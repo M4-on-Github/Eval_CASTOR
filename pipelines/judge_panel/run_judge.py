@@ -133,8 +133,10 @@ def build_output_record(image: str, gt_state: str, pred_text: str,
 # ---------------------------------------------------------------------------
 
 _MODEL_CONFIG = {
-    "qwen25_72b":  {"tp": 1, "dir": "qwen25-72b-instruct"},
-    "deepseek_r1": {"tp": 1, "dir": "deepseek-r1-distill-llama-70b"},
+    # AWQ 4-bit quantized variants: ~40 GB each, fit on 1× RTX 6000 Ada (48 GB)
+    "qwen25_72b":  {"tp": 1, "dir": "qwen25-72b-instruct-awq"},
+    "deepseek_r1": {"tp": 1, "dir": "deepseek-r1-distill-llama-70b-awq"},
+    # GPT-OSS 120B: unsupported by vLLM 0.5.5 — see containers/NOTES.md
     "gptoss_120b": {"tp": 2, "dir": "gpt-oss-120b"},
 }
 
@@ -147,7 +149,7 @@ def _run_vllm_batch(user_prompts: list, model_dir: str, tp_size: int) -> list:
     llm = LLM(
         model=model_dir,
         tensor_parallel_size=tp_size,
-        dtype="bfloat16",
+        dtype="auto",           # auto-detects AWQ/GPTQ quantization from model config
         max_model_len=8192,
         trust_remote_code=True,
         gpu_memory_utilization=0.90,

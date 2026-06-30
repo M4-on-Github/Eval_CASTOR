@@ -105,14 +105,19 @@ mkdir -p "$HF_HOME"
 
 case "$MODEL_FILTER" in
     qwen25_72b|all)
-        download_model "Qwen/Qwen2.5-72B-Instruct" "qwen25-72b-instruct" "Qwen2.5-72B"
+        # AWQ 4-bit quantized — fits on 1× RTX 6000 Ada (48 GB)
+        download_model "Qwen/Qwen2.5-72B-Instruct-AWQ" \
+                       "qwen25-72b-instruct-awq" "Qwen2.5-72B-AWQ"
         ;;&
     deepseek_r1|all)
-        download_model "deepseek-ai/DeepSeek-R1-Distill-Llama-70B" \
-                       "deepseek-r1-distill-llama-70b" "DeepSeek-R1-70B"
+        # AWQ 4-bit quantized — fits on 1× RTX 6000 Ada (48 GB)
+        download_model "cognitivecomputations/DeepSeek-R1-Distill-Llama-70B-AWQ" \
+                       "deepseek-r1-distill-llama-70b-awq" "DeepSeek-R1-70B-AWQ"
         ;;&
     gptoss_120b|all)
-        download_model "openai/gpt-oss-120b" "gpt-oss-120b" "GPT-OSS-120B"
+        # NOTE: gpt_oss architecture not supported by vLLM 0.5.5.
+        # Skipping until container is rebuilt with a newer vLLM version.
+        echo "[SKIP] gptoss_120b: unsupported by vLLM 0.5.5 — see containers/NOTES.md"
         ;;
     *)
         echo "ERROR: unknown --model value '$MODEL_FILTER'"
