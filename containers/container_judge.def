@@ -12,6 +12,9 @@ From: vllm/vllm-openai:v0.6.3
 
 %post
     # ── Extra packages required by the eval pipeline ──────────────────────────
+    # numpy must be pinned <2.0.0 BEFORE scikit-learn, which otherwise drags
+    # it to 2.5.x and breaks vllm 0.6.3 / outlines / numba at runtime.
+    pip install --no-cache-dir "numpy<2.0.0"
     pip install --no-cache-dir \
         "pandas>=1.5,<3" \
         "scikit-learn>=1.2,<2"

@@ -87,7 +87,7 @@ echo "  qwen25_72b  -> job $J_QWEN"
 
 echo "[$(date)] Submitting deepseek_r1 ..."
 J_DEEP=$(sbatch "${COMMON_OPTS[@]}" \
-    --gpus=1 --mem=52G \
+    --gpus=2 --mem=80G \
     --job-name="judge_deep" \
     --output="$LOGS_DIR/castor_judge_deepseek_%j.out" \
     --error="$LOGS_DIR/castor_judge_deepseek_%j.err" \

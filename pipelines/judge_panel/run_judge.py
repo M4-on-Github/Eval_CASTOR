@@ -133,23 +133,26 @@ def build_output_record(image: str, gt_state: str, pred_text: str,
 # ---------------------------------------------------------------------------
 
 _MODEL_CONFIG = {
-    # AWQ 4-bit quantized variants: ~40 GB each, fit on 1× RTX 6000 Ada (48 GB)
-    "qwen25_72b":  {"tp": 1, "dir": "qwen25-72b-instruct-awq"},
-    "deepseek_r1": {"tp": 1, "dir": "deepseek-r1-distill-llama-70b-awq"},
-    # GPT-OSS 120B: unsupported by vLLM 0.5.5 — see containers/NOTES.md
-    "gptoss_120b": {"tp": 2, "dir": "gpt-oss-120b"},
+    # Qwen: official AWQ 4-bit repo (~40 GB, 1 GPU). dtype="auto" detects AWQ.
+    "qwen25_72b":  {"tp": 1, "dir": "qwen25-72b-instruct-awq",        "quantization": None},
+    # DeepSeek: official BF16 repo + bitsandbytes INT8 at load time (~70 GB, 2 GPUs).
+    "deepseek_r1": {"tp": 2, "dir": "deepseek-r1-distill-llama-70b",  "quantization": "bitsandbytes"},
+    # GPT-OSS: BF16 MoE, 2 GPUs. dtype="auto" + trust_remote_code for custom arch.
+    "gptoss_120b": {"tp": 2, "dir": "gpt-oss-120b",                   "quantization": None},
 }
 
 
-def _run_vllm_batch(user_prompts: list, model_dir: str, tp_size: int) -> list:
+def _run_vllm_batch(user_prompts: list, model_dir: str, tp_size: int,
+                    quantization: str | None = None) -> list:
     """Load model once and score all prompts in one batch via vLLM."""
     from vllm import LLM, SamplingParams
 
-    print(f"  [vLLM] Loading model from {model_dir} (tp={tp_size}) ...")
+    print(f"  [vLLM] Loading model from {model_dir} (tp={tp_size}, quant={quantization or 'auto'}) ...")
     llm = LLM(
         model=model_dir,
         tensor_parallel_size=tp_size,
-        dtype="auto",           # auto-detects AWQ/GPTQ quantization from model config
+        dtype="auto",           # auto-detects AWQ/GPTQ from model config; use explicit quant below for BNB
+        quantization=quantization,
         max_model_len=8192,
         trust_remote_code=True,
         gpu_memory_utilization=0.90,
@@ -220,8 +223,10 @@ def run(input_path: Path, gt_path: Path, out_dir: Path, model: str,
         user_prompts.append(up)
 
     # Single vLLM batch pass
+    cfg = _MODEL_CONFIG.get(model, {})
     t0 = time.perf_counter()
-    raw_responses = _run_vllm_batch(user_prompts, model_dir, tp_size)
+    raw_responses = _run_vllm_batch(user_prompts, model_dir, tp_size,
+                                    quantization=cfg.get("quantization"))
     total_elapsed = time.perf_counter() - t0
     per_s = total_elapsed / len(raw_responses) if raw_responses else 0.0
 

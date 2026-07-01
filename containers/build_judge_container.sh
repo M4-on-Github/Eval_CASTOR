@@ -110,9 +110,9 @@ case "$MODEL_FILTER" in
                        "qwen25-72b-instruct-awq" "Qwen2.5-72B-AWQ"
         ;;&
     deepseek_r1|all)
-        # AWQ 4-bit quantized — fits on 1× RTX 6000 Ada (48 GB)
-        download_model "cognitivecomputations/DeepSeek-R1-Distill-Llama-70B-AWQ" \
-                       "deepseek-r1-distill-llama-70b-awq" "DeepSeek-R1-70B-AWQ"
+        # Official BF16 repo; loaded with bitsandbytes INT8 at runtime (~70 GB, 2 GPUs).
+        download_model "deepseek-ai/DeepSeek-R1-Distill-Llama-70B" \
+                       "deepseek-r1-distill-llama-70b" "DeepSeek-R1-70B"
         ;;&
     gptoss_120b|all)
         # NOTE: gpt_oss architecture not supported by vLLM 0.5.5.
