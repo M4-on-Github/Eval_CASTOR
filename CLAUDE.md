@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-Eval_CASTOR is a standalone evaluation harness for the CASTOR project — it measures how well LLaVA 1.5-7b classifies maritime disasters (aground, capsized, on_fire, sunken) from images. Four evaluation pipelines operate on inference JSONL files produced by CASTOR and compare them against human-annotated ground truth.
+Eval_CASTOR is a standalone evaluation harness for the CASTOR project — it measures how well LLaVA 1.5-7b classifies maritime disasters (aground, capsized, on_fire, sunken) from images. Four evaluation pipelines (P1-P4) operate on inference JSONL files produced by CASTOR and compare them against human-annotated ground truth. Pipeline 6 (`pipelines/salvage_analysis/` + `eval_salvage_plan.py`) is a separate analysis over the same inference output: it tests whether a VLM's salvage/recovery plan text is templated on its predicted state rather than grounded in the specific image — see `SPEC_salvage_analysis.md` and `docs/decisions/ADR-001-salvage-plan-statistical-tests.md`.
 
 ## Running the Pipelines
 
@@ -31,6 +31,13 @@ python pipelines/judge_castor.py [--pre-parsed] [--eval-only]
 python pipelines/eval_separated.py
 ```
 
+**Pipeline 6 — salvage plan templating analysis (requires Ollama for Stages 1-2):**
+```
+python pipelines/salvage_analysis/extract.py --run <run_name>          # Stage 1: element extraction
+python pipelines/salvage_analysis/normalize.py --run <run_name> --threshold <float>  # Stage 2: clustering (no default threshold — pick deliberately, review output)
+python pipelines/eval_salvage_plan.py --run <run_name>                 # Stage 3+4: contingency table + stats + report
+```
+
 ## Data Paths
 
 The scripts expect inference data **outside** this repo:
@@ -39,28 +46,41 @@ The scripts expect inference data **outside** this repo:
 |----------|-------------|
 | `RESULTS_IN` (P1/P2/P3) | `../../results/castor_results/*.jsonl` |
 | `RESULTS_IN` (P4) | `../../results/separated_into_parts/separated_into_parts_*/` |
+| `RESULTS_IN` (P6) | `../../results/castor_results/*.jsonl` (same as P1-P3) |
 
 These paths resolve to `#ONR_CAI/results/` two directories above `Eval_CASTOR/`. The `results/` subtree inside this repo (gitignored) holds only **outputs**, not inputs.
+
+**Note:** as of this writing, `#ONR_CAI/results/castor_results/` does not exist yet at that canonical path — only `#ONR_CAI/tempp/*.jsonl` and `#ONR_CAI/tempp/castor_results/*.jsonl` (duplicates) hold full-answer inference data. Until real inference output is copied into place, pass `--input` explicitly to point Pipeline 6's scripts at `tempp/`.
 
 ## Architecture
 
 ```
 Eval_CASTOR/
-  pipelines/          ← four runnable entry points
+  pipelines/          ← runnable entry points
     eval_castor.py    ← P1 (regex) and P2 (--pre-parsed); separate output dirs
     extract_gemma.py  ← P2 step 1: Ollama-based field extraction
     judge_castor.py   ← P3: Ollama-based semantic judge
     eval_separated.py ← P4: one-JSONL-per-field format
+    eval_salvage_plan.py    ← P6 Stage 3+4: contingency table, stats, report
+    salvage_analysis/       ← P6 package
+      records.py            ← pulls a field out of a full-answer text blob
+      extract.py            ← P6 Stage 1: LLM element extraction
+      normalize.py           ← P6 Stage 2: embedding + clustering into canonical elements
+      contingency.py         ← P6 Stage 3 helpers (typicality score, modal element set)
+      prompts/               ← Stage 1 extraction prompts
   shared/             ← shared Python package (add to sys.path via EVAL_ROOT)
     loaders.py        ← JSONL loading, GT loading, ministral /n-format handling
     metrics.py        ← normalization, scoring, per_state_report, summary_row
-    ollama.py         ← Ollama REST client (strips fences, unescapes LaTeX, returns dict)
+    ollama.py         ← Ollama REST client (strips fences, unescapes LaTeX, returns dict; also embed_ollama for P6)
+    stats.py          ← P6: Fisher's exact, BH-FDR, Kruskal-Wallis, Dunn's test
   human_ground_truth_label/human_gt.csv
+  docs/decisions/     ← ADRs (see ADR-001 for P6's statistical test rationale)
   results/            ← gitignored; all outputs go here
     p1_regex/
     p2_llm_extract/extracted/   ← Gemma output JSOLs
     p3_llm_judge/verdicts/
     p4_separated/
+    p6_salvage_plan/    ← raw_elements_*.jsonl, elements_*.json, contingency_*.csv, tests_*.csv, report_*.txt
 ```
 
 Each pipeline script sets `EVAL_ROOT = Path(__file__).parent.parent` and does `sys.path.insert(0, str(EVAL_ROOT))` to make `shared` importable.
@@ -81,9 +101,10 @@ Each pipeline script sets `EVAL_ROOT = Path(__file__).parent.parent` and does `s
 
 | Env var | Default | Purpose |
 |---------|---------|---------|
-| `OLLAMA_HOST` | `http://localhost:11434` | Ollama endpoint (both extract + judge) |
+| `OLLAMA_HOST` | `http://localhost:11434` | Ollama endpoint (extract, judge, and P6 salvage extraction/embedding) |
 | `CASTOR_GEMMA_MODEL` | `gemma4:31b-cloud` | Extraction model (P2) |
 | `CASTOR_JUDGE_MODEL` | `gemma4:31b-cloud` | Judge model (P3) |
+| `CASTOR_SALVAGE_MODEL` | `gemma4:31b-cloud` | Element extraction + embedding model (P6 Stages 1-2) |
 
 All Ollama calls use `temperature: 0`, `format: "json"`, `num_predict: 1024`, no streaming.
 
@@ -100,7 +121,8 @@ P3 (judge) uses a different schema: `judge_{field}` boolean columns + `judge_all
 ## Dependencies
 
 ```
-pandas, scikit-learn   ← metrics and classification_report
+pandas, scikit-learn   ← metrics and classification_report; AgglomerativeClustering (P6 Stage 2)
+scipy                  ← P6: fisher_exact, kruskal, norm, rankdata (shared/stats.py)
 ```
 
-No additional pip packages. Ollama HTTP calls use `urllib.request` (stdlib).
+Ollama HTTP calls use `urllib.request` (stdlib). `scipy` is a transitive dependency of scikit-learn that was already installed but not previously imported directly; Pipeline 6 imports it directly, so it's now a real (not just transitive) dependency — see `docs/decisions/ADR-001-salvage-plan-statistical-tests.md`.
