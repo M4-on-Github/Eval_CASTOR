@@ -1,0 +1,7 @@
+SALVAGE PLAN:
+{recovery_text}
+
+Extract the concrete salvage entities/actions mentioned above. Output valid JSON only:
+{{
+  "elements": ["<phrase>", ...]
+}}

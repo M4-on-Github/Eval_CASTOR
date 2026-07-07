@@ -65,3 +65,26 @@ def call_ollama(system: str, user: str, model: str, url: str,
         return parsed, stripped, elapsed
     except json.JSONDecodeError as e:
         return None, f"CONTENT_JSON_ERROR: {e} | content={content[:300]}", elapsed
+
+
+def embed_ollama(text: str, model: str, url: str) -> list:
+    """POST to Ollama /api/embeddings. Returns the embedding vector, or None
+    on any HTTP/parse error (never raises)."""
+    payload = json.dumps({"model": model, "prompt": text}).encode("utf-8")
+    req = urllib.request.Request(
+        url, data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=180) as resp:
+            raw = resp.read().decode("utf-8")
+    except (urllib.error.URLError, TimeoutError):
+        return None
+
+    try:
+        outer = json.loads(raw)
+        return outer["embedding"]
+    except (json.JSONDecodeError, KeyError):
+        return None
