@@ -14,6 +14,7 @@ Usage:
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -24,10 +25,11 @@ import pandas as pd
 
 from shared.loaders import load_ground_truth, load_run
 from shared.metrics import normalize_state
+from pipelines.salvage_analysis import paths
+from pipelines.salvage_analysis.combine_shards import resolve_input_path
 from pipelines.salvage_analysis.records import get_field_text
 
-RESULTS_IN = EVAL_ROOT.parent / "results" / "castor_results"
-OUT_DIR = EVAL_ROOT / "results" / "p6_salvage_plan"
+RESULTS_IN = Path(os.environ.get("CASTOR_SALVAGE_RESULTS_DIR", paths.PLANS_TO_JUDGE_DIR))
 GT_PATH = EVAL_ROOT / "human_ground_truth_label" / "human_gt.csv"
 
 
@@ -112,9 +114,9 @@ def build_contingency_table(images: list, predicted_state: dict, gt_state: dict,
 # ---------------------------------------------------------------------------
 
 def run(run_name: str, input_path: Path = None, gt_path: Path = GT_PATH) -> pd.DataFrame:
-    input_path = input_path or (RESULTS_IN / f"{run_name}.jsonl")
-    raw_elements_path = OUT_DIR / f"raw_elements_{run_name}.jsonl"
-    elements_map_path = OUT_DIR / f"elements_{run_name}.json"
+    input_path = resolve_input_path(run_name, input_path, RESULTS_IN, paths.run_dir(run_name))
+    raw_elements_path = paths.raw_elements_path(run_name)
+    elements_map_path = paths.elements_path(run_name)
 
     records = load_run(input_path)
     gt = load_ground_truth(gt_path)
@@ -143,8 +145,8 @@ def run(run_name: str, input_path: Path = None, gt_path: Path = GT_PATH) -> pd.D
 
     df = build_contingency_table(images, predicted_state, gt_state, element_sets, elements)
 
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    out_path = OUT_DIR / f"contingency_{run_name}.csv"
+    out_path = paths.contingency_path(run_name)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(out_path, index=False)
     print(f"  {len(df)} images -> {out_path}")
     return df

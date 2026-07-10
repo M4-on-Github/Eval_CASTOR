@@ -5,14 +5,22 @@ elements.
 Stage 1 (extract.py) produces raw phrases ("call a fireboat", "dispatch
 fireboat", "fireboat response") that need collapsing into one canonical
 label per real-world concept before Stage 3 can build a contingency table.
-Phrases are embedded (Ollama) and clustered by cosine distance
+Phrases are embedded and clustered by cosine distance
 (AgglomerativeClustering) — the distance threshold has no default anywhere
 in this module; it must be chosen deliberately per run and the resulting
 clusters reviewed before Stage 3 is trusted (see SPEC_salvage_analysis.md
 Boundaries and ADR-001).
 
+Two backends:
+  --backend ollama (default) -- local dev, Ollama's /api/embeddings (needs a
+    locally-running Ollama server built with --embeddings support).
+  --backend local -- cluster runs, no Ollama available there. Embeds phrases
+    with a small local sentence-transformers model (no network at runtime
+    once the checkpoint is cached) -- same clustering math either way.
+
 Usage:
   python pipelines/salvage_analysis/normalize.py --run answers_baseline --threshold 0.3
+  python pipelines/salvage_analysis/normalize.py --run answers_baseline --threshold 0.3 --backend local
 """
 
 import argparse
@@ -27,11 +35,11 @@ sys.path.insert(0, str(EVAL_ROOT))
 from sklearn.cluster import AgglomerativeClustering
 
 from shared.ollama import embed_ollama
-
-OUT_DIR = EVAL_ROOT / "results" / "p6_salvage_plan"
+from pipelines.salvage_analysis import paths
 
 DEFAULT_MODEL = os.environ.get("CASTOR_SALVAGE_MODEL", "gemma4:31b-cloud")
 DEFAULT_OLLAMA_URL = os.environ.get("OLLAMA_HOST", "http://localhost:11434") + "/api/embeddings"
+DEFAULT_LOCAL_EMBED_MODEL = os.environ.get("CASTOR_SALVAGE_EMBED_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 
 
 # ---------------------------------------------------------------------------
@@ -73,6 +81,21 @@ def cluster_phrases(phrase_to_vector: dict, threshold: float) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Embedding backends
+# ---------------------------------------------------------------------------
+
+def embed_local(phrases: list, model_name: str) -> dict:
+    """Embed phrases with a local sentence-transformers model -- no network,
+    no Ollama. Used on the cluster where no embedding service is available."""
+    from sentence_transformers import SentenceTransformer
+
+    print(f"  [local] Loading embedding model {model_name} ...")
+    model = SentenceTransformer(model_name)
+    vectors = model.encode(phrases, convert_to_numpy=True)
+    return {phrase: vector.tolist() for phrase, vector in zip(phrases, vectors)}
+
+
+# ---------------------------------------------------------------------------
 # Driver
 # ---------------------------------------------------------------------------
 
@@ -89,22 +112,27 @@ def collect_unique_phrases(raw_elements_path: Path) -> list:
     return sorted(phrases)
 
 
-def run(run_name: str, threshold: float, model: str, url: str):
-    raw_elements_path = OUT_DIR / f"raw_elements_{run_name}.jsonl"
-    phrases = collect_unique_phrases(raw_elements_path)
+def run(run_name: str, threshold: float, backend: str = "ollama",
+        model: str = DEFAULT_MODEL, url: str = DEFAULT_OLLAMA_URL,
+        embed_model: str = DEFAULT_LOCAL_EMBED_MODEL):
+    phrases = collect_unique_phrases(paths.raw_elements_path(run_name))
     print(f"  {len(phrases)} unique raw phrases to embed.")
 
-    phrase_to_vector = {}
-    for phrase in phrases:
-        vector = embed_ollama(phrase, model, url)
-        if vector is None:
-            print(f"  WARNING: embedding failed for phrase: {phrase!r}")
-            continue
-        phrase_to_vector[phrase] = vector
+    if backend == "local":
+        phrase_to_vector = embed_local(phrases, embed_model)
+    else:
+        phrase_to_vector = {}
+        for phrase in phrases:
+            vector = embed_ollama(phrase, model, url)
+            if vector is None:
+                print(f"  WARNING: embedding failed for phrase: {phrase!r}")
+                continue
+            phrase_to_vector[phrase] = vector
 
     mapping = cluster_phrases(phrase_to_vector, threshold)
 
-    out_path = OUT_DIR / f"elements_{run_name}.json"
+    out_path = paths.elements_path(run_name)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(
         json.dumps({"raw_to_canonical": mapping, "threshold": threshold}, indent=2),
         encoding="utf-8",
@@ -122,11 +150,16 @@ def main():
     ap.add_argument("--threshold", type=float, required=True,
                      help="Cosine distance threshold for clustering — no default; "
                           "pick deliberately and review the output before trusting it")
-    ap.add_argument("--model", default=DEFAULT_MODEL)
-    ap.add_argument("--url", default=DEFAULT_OLLAMA_URL)
+    ap.add_argument("--backend", choices=["ollama", "local"], default="ollama",
+                    help="'ollama' for local dev (needs Ollama with --embeddings support); "
+                         "'local' for cluster runs (sentence-transformers, no network)")
+    ap.add_argument("--model", default=DEFAULT_MODEL, help="Ollama embedding model (--backend ollama only)")
+    ap.add_argument("--url", default=DEFAULT_OLLAMA_URL, help="Ollama embeddings endpoint (--backend ollama only)")
+    ap.add_argument("--embed-model", default=DEFAULT_LOCAL_EMBED_MODEL,
+                    help="sentence-transformers model name (--backend local only)")
     args = ap.parse_args()
 
-    run(args.run, args.threshold, args.model, args.url)
+    run(args.run, args.threshold, args.backend, args.model, args.url, args.embed_model)
 
 
 if __name__ == "__main__":
