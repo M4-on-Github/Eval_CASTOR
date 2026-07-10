@@ -139,3 +139,28 @@ def test_element_state_test_defaults_p_corrected_to_none():
         odds_ratio=81.0, p_value=0.0001,
     )
     assert t.p_corrected is None
+
+
+def test_element_state_test_defaults_prevalence_counts_to_zero():
+    # Raw prevalence fields must default so existing call sites that don't
+    # pass them (e.g. hand-built tests elsewhere) keep working unmodified.
+    t = ElementStateTest(
+        element="fireboat", state="on_fire", state_source="predicted",
+        odds_ratio=81.0, p_value=0.0001,
+    )
+    assert t.count_in_state == 0
+    assert t.n_in_state == 0
+    assert t.count_out_state == 0
+    assert t.n_out_state == 0
+
+
+def test_element_state_test_stores_prevalence_counts():
+    t = ElementStateTest(
+        element="fireboat", state="on_fire", state_source="predicted",
+        odds_ratio=81.0, p_value=0.0001,
+        count_in_state=8, n_in_state=16, count_out_state=2, n_out_state=94,
+    )
+    assert t.count_in_state == 8
+    assert t.n_in_state == 16
+    assert t.count_out_state == 2
+    assert t.n_out_state == 94

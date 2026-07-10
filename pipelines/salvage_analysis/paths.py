@@ -14,6 +14,7 @@ for that run in one place.
         tests.csv              <- Stage 4: Fisher's exact, per (element, state, source)
         omnibus.csv            <- Stage 4: Kruskal-Wallis, per state_source
         dunn.csv               <- Stage 4: Dunn's pairwise post-hoc (only rows where omnibus was significant)
+        generic_elements.csv   <- Stage 4: frequent-but-never-significant elements (boilerplate, not a state signature)
         report.txt             <- Stage 4: human-readable summary of the above
       answers_degf/
         ...
@@ -57,6 +58,10 @@ def omnibus_path(run_name: str) -> Path:
 
 def dunn_path(run_name: str) -> Path:
     return run_dir(run_name) / "dunn.csv"
+
+
+def generic_elements_path(run_name: str) -> Path:
+    return run_dir(run_name) / "generic_elements.csv"
 
 
 def report_path(run_name: str) -> Path:

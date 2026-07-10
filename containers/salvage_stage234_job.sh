@@ -29,8 +29,9 @@
 
 set -e
 
-MANIFEST="${1:?Usage: salvage_stage234_job.sh MANIFEST_FILE THRESHOLD (run as a SLURM array task)}"
-THRESHOLD="${2:?Usage: salvage_stage234_job.sh MANIFEST_FILE THRESHOLD (run as a SLURM array task)}"
+MANIFEST="${1:?Usage: salvage_stage234_job.sh MANIFEST_FILE THRESHOLD MIN_GENERIC_PCT (run as a SLURM array task)}"
+THRESHOLD="${2:?Usage: salvage_stage234_job.sh MANIFEST_FILE THRESHOLD MIN_GENERIC_PCT (run as a SLURM array task)}"
+MIN_GENERIC_PCT="${3:?Usage: salvage_stage234_job.sh MANIFEST_FILE THRESHOLD MIN_GENERIC_PCT (run as a SLURM array task)}"
 : "${SLURM_ARRAY_TASK_ID:?SLURM_ARRAY_TASK_ID not set -- this script must run as a SLURM array task, see submit_salvage.sh}"
 RUN_NAME="$(sed -n "$((SLURM_ARRAY_TASK_ID + 1))p" "$MANIFEST")"
 if [ -z "$RUN_NAME" ]; then
@@ -46,8 +47,9 @@ echo " Pipeline 6 Stage 2+3+4 -- Cluster, Stats, Report"
 echo " Job ID    : $SLURM_JOB_ID"
 echo " Node      : $(hostname)"
 echo " Started   : $(date)"
-echo " Run name  : $RUN_NAME"
-echo " Threshold : $THRESHOLD"
+echo " Run name         : $RUN_NAME"
+echo " Threshold        : $THRESHOLD"
+echo " Min generic pct  : $MIN_GENERIC_PCT"
 echo "==========================================="
 
 SIF="$DATA_DIR/castor_judge.sif"
@@ -87,7 +89,8 @@ apptainer exec --containall \
     --bind "$DATA_DIR:$DATA_DIR" \
     "$SIF" \
     python3 "$REPO/pipelines/eval_salvage_plan.py" \
-        --run "$RUN_NAME"
+        --run "$RUN_NAME" \
+        --min-generic-pct "$MIN_GENERIC_PCT"
 
 echo "==========================================="
 echo " Stage 2+3+4 complete : $(date)"

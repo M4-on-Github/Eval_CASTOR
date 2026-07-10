@@ -37,19 +37,19 @@ Drop the full-answer JSONL(s) you want judged into `p6_plans_to_judge/` first (e
 ```
 python pipelines/salvage_analysis/extract.py --run <run_name>          # Stage 1: element extraction
 python pipelines/salvage_analysis/normalize.py --run <run_name> --threshold <float>  # Stage 2: clustering (no default threshold — pick deliberately, review output)
-python pipelines/eval_salvage_plan.py --run <run_name>                 # Stage 3+4: contingency table + stats + report
+python pipelines/eval_salvage_plan.py --run <run_name> --min-generic-pct <float>  # Stage 3+4: contingency table + stats + report (no default — see generic_elements.csv)
 ```
 `eval_salvage_plan.py` (Stage 4) with no `--run` processes every run currently sitting in `p6_plans_to_judge/`.
 
 **Pipeline 6 on the cluster (pleiades, SLURM) — no Ollama there:**
 ```
-bash containers/build_judge_container.sh --model deepseek_r1     # one-time, if not already built for the Judge Panel
-bash containers/build_judge_container.sh --model salvage_embed   # one-time: caches the local embedding model
-bash containers/submit_salvage.sh --threshold <float>             # judges every run in p6_plans_to_judge/
-bash containers/submit_salvage.sh --run <run_name> --threshold <float>  # or just one
+bash containers/build_judge_container.sh --model qwen25_72b       # one-time, Stage 1's default extraction model
+bash containers/build_judge_container.sh --model salvage_embed    # one-time: caches the local embedding model
+bash containers/submit_salvage.sh --threshold <float> --min-generic-pct <float>              # judges every run in p6_plans_to_judge/
+bash containers/submit_salvage.sh --run <run_name> --threshold <float> --min-generic-pct <float>  # or just one
 ```
 There is no Ollama on the cluster, so the cluster path uses different backends than local dev:
-- **Stage 1** (`extract.py --backend vllm`): loads `deepseek_r1` directly via vLLM inside `castor_judge.sif` (same model already built for the Judge Panel — see `containers/build_judge_container.sh`), GPU job, one batch generation pass over all pending records. `clean_and_parse_json` strips deepseek's `<think>` blocks/code fences before parsing.
+- **Stage 1** (`extract.py --backend vllm`): loads `qwen25_72b` directly via vLLM inside `castor_judge.sif` (same model already built for the Judge Panel — see `containers/build_judge_container.sh`), GPU job, one batch generation pass over all pending records, with guided JSON decoding constraining output to a valid `{"elements": [...]}` shape from the first token. `deepseek_r1` is available as a `--model-key deepseek_r1` fallback (its `<think>` blocks/code fences get stripped by `clean_and_parse_json`), but hit repeated reasoning-related failures in practice (rule recitation, repetition loops, and hallucinating from its own prompt on empty input) — see `pipelines/salvage_analysis/extract.py`'s `_VLLM_MODEL_CONFIG` comment.
 - **Stage 2** (`normalize.py --backend local`): embeds phrases with a small local `sentence-transformers/all-MiniLM-L6-v2` model (no network at runtime, cached under `/data/$USER/all-minilm-l6-v2`) instead of Ollama's `/api/embeddings`. Same `cluster_phrases`/`AgglomerativeClustering` math either way — only the vector source changes.
 - Local dev keeps the original Ollama-based backends (`--backend ollama`, the default for both scripts) for interactive testing against a local Ollama server.
 
@@ -111,7 +111,7 @@ Eval_CASTOR/
     p2_llm_extract/extracted/   ← Gemma output JSOLs
     p3_llm_judge/verdicts/
     p4_separated/
-    p6_salvage_plan/    ← one subdirectory per run: <run_name>/{raw_elements.jsonl, elements.json, contingency.csv, tests.csv, omnibus.csv, dunn.csv, report.txt}
+    p6_salvage_plan/    ← one subdirectory per run: <run_name>/{raw_elements.jsonl, elements.json, contingency.csv, tests.csv, omnibus.csv, dunn.csv, generic_elements.csv, report.txt}
 ```
 
 Each pipeline script sets `EVAL_ROOT = Path(__file__).parent.parent` and does `sys.path.insert(0, str(EVAL_ROOT))` to make `shared` importable.

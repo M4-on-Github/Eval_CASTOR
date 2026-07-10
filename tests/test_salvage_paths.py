@@ -25,6 +25,7 @@ def test_stage_paths_live_inside_the_run_dir():
     assert paths.tests_path(run_name) == run_dir / "tests.csv"
     assert paths.omnibus_path(run_name) == run_dir / "omnibus.csv"
     assert paths.dunn_path(run_name) == run_dir / "dunn.csv"
+    assert paths.generic_elements_path(run_name) == run_dir / "generic_elements.csv"
     assert paths.report_path(run_name) == run_dir / "report.txt"
 
 

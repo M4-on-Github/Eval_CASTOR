@@ -19,6 +19,14 @@ class ElementStateTest:
     odds_ratio: float
     p_value: float
     p_corrected: float | None = None
+    # Raw prevalence, independent of the comparative Fisher's test -- lets a
+    # reader answer "how often does this actually appear in this state" (a
+    # marginal frequency question) alongside "is it differentially
+    # associated with this state vs. elsewhere" (what p_value tests).
+    count_in_state: int = 0
+    n_in_state: int = 0
+    count_out_state: int = 0
+    n_out_state: int = 0
 
 
 def fisher_one_vs_rest(present: list, in_state: list) -> tuple:

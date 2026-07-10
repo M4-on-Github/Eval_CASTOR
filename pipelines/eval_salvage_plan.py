@@ -45,17 +45,25 @@ SIGNIFICANCE_THRESHOLD = 0.05
 
 def run_all_fisher_tests(df: pd.DataFrame, elements: list) -> list:
     """One ElementStateTest per (element, state, source) combination, source
-    in {"predicted", "gt"}, one-vs-rest."""
+    in {"predicted", "gt"}, one-vs-rest. Also records raw prevalence counts
+    (independent of the comparative Fisher's test) so a reader can answer
+    "how often does this actually appear in this state" directly."""
     tests = []
     for source, state_col in [("predicted", "predicted_state"), ("gt", "gt_state")]:
         for state_value in sorted(df[state_col].dropna().unique()):
             in_state = (df[state_col] == state_value).tolist()
+            n_in_state = sum(in_state)
+            n_out_state = len(in_state) - n_in_state
             for element in elements:
                 present = df[element].tolist()
                 odds_ratio, p_value = fisher_one_vs_rest(present, in_state)
+                count_in_state = sum(p and s for p, s in zip(present, in_state))
+                count_out_state = sum(p and not s for p, s in zip(present, in_state))
                 tests.append(ElementStateTest(
                     element=element, state=state_value, state_source=source,
                     odds_ratio=odds_ratio, p_value=p_value,
+                    count_in_state=count_in_state, n_in_state=n_in_state,
+                    count_out_state=count_out_state, n_out_state=n_out_state,
                 ))
     return tests
 
@@ -108,21 +116,82 @@ def run_omnibus_test(df: pd.DataFrame, score_col: str, state_col: str) -> dict:
 _SOURCE_SORT_ORDER = {"predicted": 0, "gt": 1}
 
 
+def _safe_pct(count: int, n: int) -> float:
+    return count / n if n else 0.0
+
+
 def element_tests_to_dataframe(tests: list) -> pd.DataFrame:
     """Sorted predicted-then-gt, most-significant-first within each track,
-    so the CSV is scannable without sorting it in a spreadsheet first."""
+    so the CSV is scannable without sorting it in a spreadsheet first.
+    pct_in_state/pct_out_state are raw prevalence -- independent of
+    significance, they answer "how often does this actually appear in this
+    state" directly, alongside the comparative p_value/odds_ratio."""
+    columns = [
+        "element", "state", "state_source", "odds_ratio", "p_value", "p_corrected",
+        "count_in_state", "n_in_state", "pct_in_state",
+        "count_out_state", "n_out_state", "pct_out_state",
+    ]
     df = pd.DataFrame([
         {
             "element": t.element, "state": t.state, "state_source": t.state_source,
             "odds_ratio": t.odds_ratio, "p_value": t.p_value, "p_corrected": t.p_corrected,
+            "count_in_state": t.count_in_state, "n_in_state": t.n_in_state,
+            "pct_in_state": _safe_pct(t.count_in_state, t.n_in_state),
+            "count_out_state": t.count_out_state, "n_out_state": t.n_out_state,
+            "pct_out_state": _safe_pct(t.count_out_state, t.n_out_state),
         }
         for t in tests
-    ], columns=["element", "state", "state_source", "odds_ratio", "p_value", "p_corrected"])
+    ], columns=columns)
     sort_key = df["state_source"].map(_SOURCE_SORT_ORDER).fillna(len(_SOURCE_SORT_ORDER))
     df = df.assign(_sort_key=sort_key).sort_values(
         ["_sort_key", "p_corrected"], na_position="last"
     ).drop(columns="_sort_key").reset_index(drop=True)
     return df
+
+
+def identify_generic_elements(tests: list, min_overall_pct: float) -> pd.DataFrame:
+    """Elements used often overall but never significantly associated with
+    any single state -- boilerplate the model reaches for regardless of
+    what it thinks is happening, as opposed to a real state-specific
+    signature (e.g. "fireboat" for on_fire). min_overall_pct has no default
+    on purpose -- same "ask first" convention as Stage 2's clustering
+    threshold, since what counts as "frequent enough to flag" is a
+    judgment call, not something to guess.
+
+    An element is flagged within a state_source track if:
+    - its overall prevalence in that track is >= min_overall_pct. One-vs-
+      rest states are mutually exclusive, so summing count_in_state (and
+      n_in_state) across all of an element's per-state tests in one track
+      gives exactly its total count (and the dataset size) for that track,
+      with no double-counting.
+    - none of its per-state tests in that track reached significance."""
+    rows = []
+    for source in {t.state_source for t in tests}:
+        source_tests = [t for t in tests if t.state_source == source]
+        by_element = {}
+        for t in source_tests:
+            by_element.setdefault(t.element, []).append(t)
+        for element, elem_tests in by_element.items():
+            overall_count = sum(t.count_in_state for t in elem_tests)
+            overall_n = sum(t.n_in_state for t in elem_tests)
+            overall_pct = _safe_pct(overall_count, overall_n)
+            any_significant = any(
+                t.p_corrected is not None and t.p_corrected < SIGNIFICANCE_THRESHOLD
+                for t in elem_tests
+            )
+            if overall_pct >= min_overall_pct and not any_significant:
+                p_corrected_seen = [t.p_corrected for t in elem_tests if t.p_corrected is not None]
+                rows.append({
+                    "element": element,
+                    "state_source": source,
+                    "overall_count": overall_count,
+                    "overall_n": overall_n,
+                    "overall_pct": overall_pct,
+                    "min_p_corrected_seen": min(p_corrected_seen) if p_corrected_seen else None,
+                })
+    columns = ["element", "state_source", "overall_count", "overall_n", "overall_pct", "min_p_corrected_seen"]
+    df = pd.DataFrame(rows, columns=columns)
+    return df.sort_values("overall_pct", ascending=False).reset_index(drop=True)
 
 
 def omnibus_to_dataframe(omnibus_pred: dict, omnibus_gt: dict) -> pd.DataFrame:
@@ -207,7 +276,7 @@ def discover_runs() -> list:
     return discover_run_names(RESULTS_IN)
 
 
-def process_run(run_name: str):
+def process_run(run_name: str, min_generic_pct: float):
     df = contingency.run(run_name)
     elements = [c for c in df.columns if c not in NON_ELEMENT_COLUMNS]
 
@@ -226,12 +295,16 @@ def process_run(run_name: str):
     dunn_csv = paths.dunn_path(run_name)
     dunn_to_dataframe(omnibus_pred, omnibus_gt).to_csv(dunn_csv, index=False)
 
+    generic_csv = paths.generic_elements_path(run_name)
+    identify_generic_elements(tests, min_generic_pct).to_csv(generic_csv, index=False)
+
     report_file = paths.report_path(run_name)
     report_file.write_text(build_report(tests, omnibus_pred, omnibus_gt, run_name), encoding="utf-8")
 
     print(f"  {run_name}: {len(tests)} tests -> {tests_csv}")
     print(f"  Omnibus -> {omnibus_csv}")
     print(f"  Dunn's -> {dunn_csv}")
+    print(f"  Generic elements (>= {min_generic_pct:.0%} overall, never significant) -> {generic_csv}")
     print(f"  Report -> {report_file}")
 
 
@@ -240,6 +313,12 @@ def main():
         description="Stage 4: statistical tests + report for salvage plan templating (Pipeline 6)"
     )
     ap.add_argument("--run", help="Single run name; omit to process every run found in RESULTS_IN")
+    ap.add_argument("--min-generic-pct", type=float, required=True,
+                     help="Minimum overall prevalence (0-1) for an element to be flagged as a "
+                          "generic/boilerplate template in generic_elements.csv -- e.g. 0.5 means "
+                          "\"present in at least half of all records, and never significant for any "
+                          "single state.\" No default on purpose -- pick deliberately, same convention "
+                          "as Stage 2's clustering threshold.")
     args = ap.parse_args()
 
     run_names = [args.run] if args.run else discover_runs()
@@ -249,7 +328,7 @@ def main():
 
     for run_name in run_names:
         try:
-            process_run(run_name)
+            process_run(run_name, args.min_generic_pct)
         except FileNotFoundError as e:
             print(f"  Skipping {run_name}: {e}")
 

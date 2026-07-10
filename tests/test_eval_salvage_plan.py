@@ -21,6 +21,7 @@ from pipelines.eval_salvage_plan import (
     element_tests_to_dataframe,
     omnibus_to_dataframe,
     dunn_to_dataframe,
+    identify_generic_elements,
 )
 from shared.stats import ElementStateTest
 
@@ -83,6 +84,18 @@ def test_run_all_fisher_tests_covers_both_state_sources():
     tests = run_all_fisher_tests(df, elements=["fireboat"])
     sources = {t.state_source for t in tests}
     assert sources == {"predicted", "gt"}
+
+
+def test_run_all_fisher_tests_populates_raw_prevalence_counts():
+    # fireboat: present in 23/25 on_fire records, 1/25 in each other state
+    # (3/75 out-of-state total) -- hand-computed from _make_synthetic_df.
+    df = _make_synthetic_df()
+    tests = run_all_fisher_tests(df, elements=["fireboat"])
+    on_fire_pred = next(t for t in tests if t.state == "on_fire" and t.state_source == "predicted")
+    assert on_fire_pred.count_in_state == 23
+    assert on_fire_pred.n_in_state == 25
+    assert on_fire_pred.count_out_state == 3
+    assert on_fire_pred.n_out_state == 75
 
 
 def test_apply_fdr_correction_sets_p_corrected_on_every_test():
@@ -178,8 +191,24 @@ def test_element_tests_to_dataframe_has_expected_columns():
     df = _make_synthetic_df()
     tests = apply_fdr_correction(run_all_fisher_tests(df, elements=["fireboat"]))
     out = element_tests_to_dataframe(tests)
-    assert list(out.columns) == ["element", "state", "state_source", "odds_ratio", "p_value", "p_corrected"]
+    assert list(out.columns) == [
+        "element", "state", "state_source", "odds_ratio", "p_value", "p_corrected",
+        "count_in_state", "n_in_state", "pct_in_state",
+        "count_out_state", "n_out_state", "pct_out_state",
+    ]
     assert len(out) == len(tests)
+
+
+def test_element_tests_to_dataframe_computes_prevalence_percentages():
+    tests = [ElementStateTest(
+        element="fireboat", state="on_fire", state_source="predicted",
+        odds_ratio=276.0, p_value=0.0001,
+        count_in_state=23, n_in_state=25, count_out_state=3, n_out_state=75,
+    )]
+    out = element_tests_to_dataframe(tests)
+    row = out.iloc[0]
+    assert row["pct_in_state"] == pytest.approx(23 / 25)
+    assert row["pct_out_state"] == pytest.approx(3 / 75)
 
 
 def test_element_tests_to_dataframe_sorted_by_source_then_significance():
@@ -193,6 +222,58 @@ def test_element_tests_to_dataframe_sorted_by_source_then_significance():
     out = element_tests_to_dataframe(tests)
     assert list(out["state_source"]) == ["predicted", "predicted", "gt"]
     assert list(out["element"])[:2] == ["b", "c"]
+
+
+# ── identify_generic_elements ─────────────────────────────────────────────────
+
+def _generic_vs_discriminating_tests():
+    """generic_word: present in 80% of every state, never significant --
+    a boilerplate phrase the model always reaches for. fireboat: present in
+    92% of on_fire, ~4% elsewhere, significant only for on_fire -- a real
+    state-specific signature, not generic despite also being frequent."""
+    states = ["aground", "capsized", "on_fire", "sunken"]
+    tests = []
+    for state in states:
+        tests.append(ElementStateTest(
+            element="generic_word", state=state, state_source="predicted",
+            odds_ratio=1.0, p_value=0.8, p_corrected=0.9,
+            count_in_state=20, n_in_state=25, count_out_state=60, n_out_state=75,
+        ))
+    for state in states:
+        significant = state == "on_fire"
+        tests.append(ElementStateTest(
+            element="fireboat", state=state, state_source="predicted",
+            odds_ratio=100.0 if significant else 1.0,
+            p_value=0.0001 if significant else 0.8,
+            p_corrected=0.001 if significant else 0.9,
+            count_in_state=23 if significant else 1, n_in_state=25,
+            count_out_state=3 if significant else 22, n_out_state=75,
+        ))
+    return tests
+
+
+def test_identify_generic_elements_flags_frequent_non_discriminating_only():
+    tests = _generic_vs_discriminating_tests()
+    generic_df = identify_generic_elements(tests, min_overall_pct=0.3)
+    assert list(generic_df["element"]) == ["generic_word"]
+    assert generic_df.iloc[0]["overall_pct"] == pytest.approx(0.8)
+
+
+def test_identify_generic_elements_respects_min_overall_pct_threshold():
+    tests = _generic_vs_discriminating_tests()
+    # generic_word's overall_pct is 0.8 -- raising the bar above that should
+    # exclude it even though it's never significant anywhere.
+    generic_df = identify_generic_elements(tests, min_overall_pct=0.9)
+    assert len(generic_df) == 0
+
+
+def test_identify_generic_elements_excludes_significant_element_even_if_frequent():
+    # fireboat's overall prevalence (23+1+1+1)/100 = 26% is below 0.3, but
+    # even at a low threshold it must never appear -- it IS significant for
+    # on_fire, so it's a real signature, not a generic template.
+    tests = _generic_vs_discriminating_tests()
+    generic_df = identify_generic_elements(tests, min_overall_pct=0.1)
+    assert "fireboat" not in list(generic_df["element"])
 
 
 # ── omnibus_to_dataframe / dunn_to_dataframe ──────────────────────────────────
