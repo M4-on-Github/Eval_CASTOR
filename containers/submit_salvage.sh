@@ -25,10 +25,9 @@
 #
 # Arguments:
 #   --run NAME     (optional) Process only this run. Omit to discover and
-#                  process every full-answer JSONL sitting directly in
-#                  p6_plans_to_judge/ (per-field shard files there are
-#                  skipped -- they get auto-combined per run when needed,
-#                  not treated as runs of their own).
+#                  process every *.jsonl file sitting directly in
+#                  p6_plans_to_judge/, each as its own separate run --
+#                  no shard-detection heuristic.
 #   --threshold N  (required) Stage 2 clustering distance threshold, shared
 #                  across every run processed by this invocation. No default
 #                  on purpose -- inspect elements.json per run before
@@ -80,12 +79,12 @@ if [ -n "$RUN_NAME" ]; then
 else
     # Bash-native discovery (no python3 -- the login node doesn't have one).
     # Mirrors pipelines/salvage_analysis/combine_shards.py::discover_run_names:
-    # every *.jsonl directly in PLANS_DIR, except per-field shard files
-    # (answers_..._<1-7>_<field>_j<job>.jsonl), which are auto-combined per
-    # run when needed rather than treated as runs of their own.
+    # every *.jsonl directly in PLANS_DIR is its own run, no shard-detection
+    # heuristic -- two files can coincidentally match a "looks like a shard"
+    # naming pattern while having unrelated job IDs and no real sibling
+    # shards to combine with, so guessing was wrong more often than it helped.
     mapfile -t RUN_NAMES < <(
         find "$PLANS_DIR" -maxdepth 1 -name '*.jsonl' -printf '%f\n' 2>/dev/null \
-            | grep -Ev '_[1-7]_[A-Za-z]+_j[0-9]+\.jsonl$' \
             | sed 's/\.jsonl$//' \
             | sort
     )

@@ -43,17 +43,20 @@ def _load_jsonl(path: Path) -> list:
 
 
 def discover_run_names(directory: Path) -> list:
-    """Full-answer run names sitting directly in `directory` (e.g. dropped
-    into p6_plans_to_judge/), skipping per-field shard files -- those are
-    merged automatically by resolve_input_path when a run is actually
-    processed, not treated as runs in their own right."""
+    """Every *.jsonl file directly in `directory` (e.g. dropped into
+    p6_plans_to_judge/) is treated as its own run -- no shard-detection
+    heuristic. Two files can coincidentally match the per-field shard naming
+    convention (SHARD_RE) while having unrelated job IDs and no real sibling
+    shards to combine with, so guessing "this looks like a shard" and
+    silently excluding it from discovery was wrong more often than it
+    helped. resolve_input_path()'s auto-combine (via combine_run) is still
+    available for the case where you deliberately request a run name that
+    has real sibling shards on disk -- this function just no longer
+    pre-filters what counts as a run."""
     directory = Path(directory)
     if not directory.exists():
         return []
-    return sorted(
-        path.stem for path in directory.glob("*.jsonl")
-        if not SHARD_RE.match(path.name)
-    )
+    return sorted(path.stem for path in directory.glob("*.jsonl"))
 
 
 def discover_shard_groups(directory: Path) -> dict:

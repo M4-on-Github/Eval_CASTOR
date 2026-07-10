@@ -157,12 +157,22 @@ def test_discover_run_names_finds_full_answer_files(tmp_path):
     assert discover_run_names(tmp_path) == ["answers_baseline", "answers_degf"]
 
 
-def test_discover_run_names_skips_shard_files(tmp_path):
+def test_discover_run_names_treats_every_jsonl_as_its_own_run(tmp_path):
+    # No shard-detection heuristic -- every .jsonl in the directory is its
+    # own run, even ones that happen to match the per-field shard naming
+    # convention. Two files with the same "_<N>_<field>_j<job>" shape can
+    # have entirely unrelated job IDs and no real sibling shards to combine
+    # with, so guessing "this looks like a shard" and silently skipping it
+    # was actively wrong more often than it was right.
     _write_jsonl(tmp_path / "answers_baseline.jsonl", [{"image": "a.jpg"}])
     _write_jsonl(tmp_path / "answers_baseline_1_state_j100.jsonl", [{"image": "a.jpg"}])
     _write_jsonl(tmp_path / "answers_baseline_7_rescuePlan_j100.jsonl", [{"image": "a.jpg"}])
 
-    assert discover_run_names(tmp_path) == ["answers_baseline"]
+    assert discover_run_names(tmp_path) == [
+        "answers_baseline",
+        "answers_baseline_1_state_j100",
+        "answers_baseline_7_rescuePlan_j100",
+    ]
 
 
 def test_discover_run_names_empty_when_directory_missing(tmp_path):

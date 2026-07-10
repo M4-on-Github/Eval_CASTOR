@@ -59,7 +59,7 @@ There is no Ollama on the cluster, so the cluster path uses different backends t
 
 **`CASTOR_SALVAGE_RESULTS_DIR`** env var overrides the input search directory (default `p6_plans_to_judge/`, under this repo — deliberately separate from the shared `results/castor_results/` that P1-P4 read, since P6 is meant to run over a curated subset you drop in yourself, not every experimental variant sitting in the shared results directory). The SLURM scripts default it to `$REPO/p6_plans_to_judge` on the cluster too (same relative location, no NAS path needed).
 
-**`pipelines/salvage_analysis/combine_shards.py` doubles as a discovery CLI**: `python pipelines/salvage_analysis/combine_shards.py --dir p6_plans_to_judge` prints one full-answer run name per line (skipping shard files) — used by `eval_salvage_plan.py` when no `--run` is given. `submit_salvage.sh` itself discovers runs with a bash-native equivalent instead (the login node has no `python3` at all), then writes them to the manifest file the job array tasks read from.
+**`pipelines/salvage_analysis/combine_shards.py` doubles as a discovery CLI**: `python pipelines/salvage_analysis/combine_shards.py --dir p6_plans_to_judge` prints one run name per line — every `*.jsonl` file in the directory, one run each, no shard-detection heuristic (two files can coincidentally match the per-field shard naming pattern while having unrelated job IDs and no real sibling shards to combine with, so guessing was wrong more often than it helped). Used by `eval_salvage_plan.py` when no `--run` is given. `submit_salvage.sh` itself discovers runs with a bash-native equivalent instead (the login node has no `python3` at all), then writes them to the manifest file the job array tasks read from.
 
 ## Data Paths
 
