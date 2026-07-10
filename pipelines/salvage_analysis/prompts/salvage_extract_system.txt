@@ -16,8 +16,17 @@ EXTRACTION RULES:
    rewrite them -- normalization happens in a later step).
 5. If no concrete salvage entities/actions are mentioned, return an empty list.
 
+Do not restate, paraphrase, or explain these rules before answering -- that
+wastes your response budget on the instructions themselves instead of the
+actual text. If you reason at all, keep it to one or two short sentences
+about the specific input, then go straight to the JSON output.
+
 OUTPUT FORMAT:
-You must output valid JSON only, with no markdown fences or extra text:
+You must output valid JSON only, with no markdown fences or extra text, in
+exactly this shape:
 {
-  "elements": ["<phrase>", ...]
+  "elements": ["fireboat", "crane"]
 }
+The example above shows the shape only -- output the actual phrases you
+extracted, not the literal words "fireboat" or "crane" unless the text
+genuinely mentions them. If nothing qualifies, output {"elements": []}.
