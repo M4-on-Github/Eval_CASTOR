@@ -46,6 +46,35 @@ def test_fisher_one_vs_rest_no_association():
     assert p_value == 1.0
 
 
+def test_fisher_one_vs_rest_applies_haldane_anscombe_only_on_zero_cell():
+    # table [[3,0],[13,94]] -- element present in 3/16 in-state records and
+    # ZERO out-of-state records. b=0 -> raw odds ratio (a*d)/(b*c) is
+    # division-by-zero (inf). Haldane-Anscombe (+0.5 to all four cells)
+    # gives a finite, defined value instead: (3.5*94.5)/(0.5*13.5).
+    present  = [True] * 3 + [False] * 13 + [False] * 94
+    in_state = [True] * 16 + [False] * 94
+
+    odds_ratio, p_value = fisher_one_vs_rest(present, in_state)
+
+    assert odds_ratio != float("inf")
+    assert odds_ratio == pytest.approx((3.5 * 94.5) / (0.5 * 13.5))
+    # p_value must come from the TRUE table, not the smoothed one -- Fisher's
+    # exact test is already exact and doesn't need (or want) correction.
+    assert p_value == pytest.approx(0.002595, abs=1e-6)
+
+
+def test_fisher_one_vs_rest_no_correction_when_no_zero_cell():
+    # Sanity check against the "only when needed" design: a table with no
+    # zero cells must report its exact, uncorrected odds ratio, matching
+    # test_fisher_one_vs_rest_known_odds_ratio above (81, not ~40.1).
+    present  = [True] * 9 + [False] * 1 + [True] * 1 + [False] * 9
+    in_state = [True] * 10 + [False] * 10
+
+    odds_ratio, _ = fisher_one_vs_rest(present, in_state)
+
+    assert odds_ratio == 81.0
+
+
 # ── benjamini_hochberg ────────────────────────────────────────────────────────
 
 def test_benjamini_hochberg_known_example():

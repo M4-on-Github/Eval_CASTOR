@@ -30,12 +30,24 @@ class ElementStateTest:
 
 
 def fisher_one_vs_rest(present: list, in_state: list) -> tuple:
-    """present, in_state: parallel boolean lists. Returns (odds_ratio, p_value)."""
+    """present, in_state: parallel boolean lists. Returns (odds_ratio, p_value).
+
+    p_value always comes from the true, uncorrected table -- Fisher's exact
+    test is already exact and combinatorial, so it needs no correction.
+    odds_ratio gets a Haldane-Anscombe correction (+0.5 to all four cells)
+    only when b or c is zero, i.e. only when the raw (a*d)/(b*c) would
+    otherwise be inf/nan -- a well-populated table's odds ratio is reported
+    exactly, unsmoothed."""
     a = sum(p and s for p, s in zip(present, in_state))
     b = sum(p and not s for p, s in zip(present, in_state))
     c = sum(not p and s for p, s in zip(present, in_state))
     d = sum(not p and not s for p, s in zip(present, in_state))
-    return fisher_exact([[a, b], [c, d]])
+    _, p_value = fisher_exact([[a, b], [c, d]])
+    if b == 0 or c == 0:
+        odds_ratio = ((a + 0.5) * (d + 0.5)) / ((b + 0.5) * (c + 0.5))
+    else:
+        odds_ratio = (a * d) / (b * c)
+    return odds_ratio, p_value
 
 
 def benjamini_hochberg(p_values: list) -> list:

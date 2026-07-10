@@ -258,6 +258,24 @@ state vs. all others) per element.
   which recovers more power but means FDR control is a weaker guarantee in
   practice at that scale — worth remembering when reading a "significant"
   result from a run with very few images in that particular state.
+- **Odds ratio gets a conditional Haldane-Anscombe correction (+0.5 to all
+  four table cells), applied only when a cell is zero, not to every
+  table.** (Added 2026-07-10.) A one-vs-rest table with `b=0` or `c=0`
+  (element present in zero out-of-state records, or absent from zero
+  in-state records) makes the raw `(a*d)/(b*c)` odds ratio formula divide
+  by zero, producing `inf`/`nan` — reproduced directly against real data
+  earlier this session. The correction is applied to the *odds ratio only*,
+  never to the p-value: Fisher's exact test's p-value is already computed
+  combinatorially from the true table and needs no correction, so
+  `fisher_one_vs_rest()` always computes `p_value` from the unmodified
+  counts regardless of whether the odds ratio needed smoothing.
+  Chose *conditional* correction (only on zero cells) over the more common
+  epidemiology/meta-analysis convention of correcting *every* table for
+  consistency — conditional correction leaves well-populated tables
+  reporting their exact, uncorrected odds ratio (verified: the existing
+  `[[9,1],[1,9]] -> 81` test case is unchanged), fixing the actual observed
+  problem (`inf` in reports) without silently shifting every other number
+  toward 1.
 - **If Kruskal-Wallis comes back significant**, Dunn's test's pairwise
   outputs are the only place state-pair-specific conclusions should be drawn
   from for the typicality-score track — the omnibus Kruskal-Wallis p-value
