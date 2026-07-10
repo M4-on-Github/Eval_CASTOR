@@ -16,6 +16,7 @@ Usage:
 """
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -24,11 +25,11 @@ sys.path.insert(0, str(EVAL_ROOT))
 
 import pandas as pd
 
-from pipelines.salvage_analysis import contingency
+from pipelines.salvage_analysis import contingency, paths
+from pipelines.salvage_analysis.combine_shards import discover_run_names
 from shared.stats import ElementStateTest, benjamini_hochberg, dunn_test, fisher_one_vs_rest, kruskal_wallis
 
-RESULTS_IN = EVAL_ROOT.parent / "results" / "castor_results"
-OUT_DIR = EVAL_ROOT / "results" / "p6_salvage_plan"
+RESULTS_IN = Path(os.environ.get("CASTOR_SALVAGE_RESULTS_DIR", paths.PLANS_TO_JUDGE_DIR))
 
 NON_ELEMENT_COLUMNS = {
     "image", "predicted_state", "gt_state",
@@ -60,36 +61,93 @@ def run_all_fisher_tests(df: pd.DataFrame, elements: list) -> list:
 
 
 def apply_fdr_correction(tests: list) -> list:
-    """Apply Benjamini-Hochberg across the full combined test set (predicted
-    + gt together, not corrected separately -- see ADR-001 Consequences)."""
+    """Apply Benjamini-Hochberg separately within each state_source track
+    (predicted vs. gt). The two tracks answer different questions (does the
+    plan template on the model's own guess vs. on the true state) and are
+    reported as independently-labeled findings, not combined into one
+    claim -- see ADR-001. Correcting them separately was chosen over a
+    combined correction after checking this pipeline's actual predicted/gt
+    agreement rate (21-46% on real runs, not the near-total overlap a
+    combined correction would be protecting against)."""
     if not tests:
         return tests
-    corrected = benjamini_hochberg([t.p_value for t in tests])
-    for t, p_corr in zip(tests, corrected):
-        t.p_corrected = p_corr
+    for source in {t.state_source for t in tests}:
+        source_tests = [t for t in tests if t.state_source == source]
+        corrected = benjamini_hochberg([t.p_value for t in source_tests])
+        for t, p_corr in zip(source_tests, corrected):
+            t.p_corrected = p_corr
     return tests
 
 
 def run_omnibus_test(df: pd.DataFrame, score_col: str, state_col: str) -> dict:
     """Kruskal-Wallis on score_col grouped by state_col; Dunn's post-hoc only
-    when the omnibus result is significant."""
+    when the omnibus result is significant. Returns H/p_value/dunn all None
+    when fewer than 2 groups are present (e.g. a Stage 1 extraction failure
+    left every record in one predicted-state bucket) -- kruskal() itself
+    raises ValueError on fewer than 2 groups, and that shouldn't crash the
+    whole Stage 4 run over what's ultimately a data problem, not a bug."""
     groups_dict = {
         state: df.loc[df[state_col] == state, score_col].tolist()
         for state in sorted(df[state_col].dropna().unique())
     }
+    if len(groups_dict) < 2:
+        return {"H": None, "p_value": None, "dunn": None}
     H, p_value = kruskal_wallis(list(groups_dict.values()))
     dunn = dunn_test(groups_dict) if p_value < SIGNIFICANCE_THRESHOLD else None
     return {"H": H, "p_value": p_value, "dunn": dunn}
 
 
+_SOURCE_SORT_ORDER = {"predicted": 0, "gt": 1}
+
+
 def element_tests_to_dataframe(tests: list) -> pd.DataFrame:
-    return pd.DataFrame([
+    """Sorted predicted-then-gt, most-significant-first within each track,
+    so the CSV is scannable without sorting it in a spreadsheet first."""
+    df = pd.DataFrame([
         {
             "element": t.element, "state": t.state, "state_source": t.state_source,
             "odds_ratio": t.odds_ratio, "p_value": t.p_value, "p_corrected": t.p_corrected,
         }
         for t in tests
     ], columns=["element", "state", "state_source", "odds_ratio", "p_value", "p_corrected"])
+    sort_key = df["state_source"].map(_SOURCE_SORT_ORDER).fillna(len(_SOURCE_SORT_ORDER))
+    df = df.assign(_sort_key=sort_key).sort_values(
+        ["_sort_key", "p_corrected"], na_position="last"
+    ).drop(columns="_sort_key").reset_index(drop=True)
+    return df
+
+
+def omnibus_to_dataframe(omnibus_pred: dict, omnibus_gt: dict) -> pd.DataFrame:
+    """One row per state_source (predicted, gt) with the Kruskal-Wallis H,
+    p_value, and whether it cleared SIGNIFICANCE_THRESHOLD. H/p_value are
+    NaN when there weren't enough groups to test (see run_omnibus_test)."""
+    rows = []
+    for source, omnibus in [("predicted", omnibus_pred), ("gt", omnibus_gt)]:
+        significant = omnibus["p_value"] is not None and omnibus["p_value"] < SIGNIFICANCE_THRESHOLD
+        rows.append({
+            "state_source": source,
+            "H": omnibus["H"],
+            "p_value": omnibus["p_value"],
+            "significant": significant,
+        })
+    return pd.DataFrame(rows, columns=["state_source", "H", "p_value", "significant"])
+
+
+def dunn_to_dataframe(omnibus_pred: dict, omnibus_gt: dict) -> pd.DataFrame:
+    """One row per Dunn's post-hoc pairwise comparison, across both
+    state_source tracks. Empty (but correctly-columned) when neither
+    omnibus test was significant -- Dunn's only runs when Kruskal-Wallis
+    already cleared the bar (see run_omnibus_test)."""
+    rows = []
+    for source, omnibus in [("predicted", omnibus_pred), ("gt", omnibus_gt)]:
+        for d in (omnibus["dunn"] or []):
+            rows.append({
+                "state_source": source,
+                "group_a": d["group_a"],
+                "group_b": d["group_b"],
+                "p_value": d["p_value"],
+            })
+    return pd.DataFrame(rows, columns=["state_source", "group_a", "group_b", "p_value"])
 
 
 def build_report(tests: list, omnibus_pred: dict, omnibus_gt: dict, run_name: str) -> str:
@@ -119,6 +177,10 @@ def build_report(tests: list, omnibus_pred: dict, omnibus_gt: dict, run_name: st
         ("predicted_state", omnibus_pred, "predicted_state"),
         ("gt_state", omnibus_gt, "gt_state"),
     ]:
+        if omnibus["p_value"] is None:
+            lines.append(f"Kruskal-Wallis on typicality score by {label}: not enough groups to test (fewer than 2 {label} values present).")
+            lines.append("")
+            continue
         lines.append(f"Kruskal-Wallis on typicality score by {label}: H={omnibus['H']:.3f}  p={omnibus['p_value']:.4g}")
         if omnibus["dunn"]:
             lines.append("  Significant -- Dunn's post-hoc pairwise p-values:")
@@ -134,9 +196,7 @@ def build_report(tests: list, omnibus_pred: dict, omnibus_gt: dict, run_name: st
 # ---------------------------------------------------------------------------
 
 def discover_runs() -> list:
-    if not RESULTS_IN.exists():
-        return []
-    return sorted(p.stem for p in RESULTS_IN.glob("*.jsonl"))
+    return discover_run_names(RESULTS_IN)
 
 
 def process_run(run_name: str):
@@ -147,16 +207,24 @@ def process_run(run_name: str):
     omnibus_pred = run_omnibus_test(df, "typicality_score_pred", "predicted_state")
     omnibus_gt = run_omnibus_test(df, "typicality_score_gt", "gt_state")
 
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    paths.run_dir(run_name).mkdir(parents=True, exist_ok=True)
 
-    tests_csv = OUT_DIR / f"tests_{run_name}.csv"
+    tests_csv = paths.tests_path(run_name)
     element_tests_to_dataframe(tests).to_csv(tests_csv, index=False)
 
-    report_path = OUT_DIR / f"report_{run_name}.txt"
-    report_path.write_text(build_report(tests, omnibus_pred, omnibus_gt, run_name), encoding="utf-8")
+    omnibus_csv = paths.omnibus_path(run_name)
+    omnibus_to_dataframe(omnibus_pred, omnibus_gt).to_csv(omnibus_csv, index=False)
+
+    dunn_csv = paths.dunn_path(run_name)
+    dunn_to_dataframe(omnibus_pred, omnibus_gt).to_csv(dunn_csv, index=False)
+
+    report_file = paths.report_path(run_name)
+    report_file.write_text(build_report(tests, omnibus_pred, omnibus_gt, run_name), encoding="utf-8")
 
     print(f"  {run_name}: {len(tests)} tests -> {tests_csv}")
-    print(f"  Report -> {report_path}")
+    print(f"  Omnibus -> {omnibus_csv}")
+    print(f"  Dunn's -> {dunn_csv}")
+    print(f"  Report -> {report_file}")
 
 
 def main():
