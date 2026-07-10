@@ -42,8 +42,10 @@ rather than built now.
 
 **Primary test — Fisher's exact test, per (element, state) pair, framed as
 one-vs-rest, with Benjamini-Hochberg FDR correction applied separately
-within each of the predicted-state and GT-state test tracks, and odds ratio
-as the effect size.**
+within each (state_source, state) pair -- e.g. `predicted/on_fire` and
+`predicted/aground` each get their own independent correction, not pooled
+together or with the GT-state tracks -- and odds ratio as the effect
+size.**
 
 **Secondary/omnibus test — Kruskal-Wallis on `typicality_score`, grouped by
 state (run once for `predicted_state`, once for `gt_state`), with Dunn's test
@@ -237,6 +239,25 @@ state vs. all others) per element.
   independently FDR-controlled findings, not mutual confirmation — an
   element significant under `predicted` and not under `gt` (or vice versa)
   is a real, reportable distinction, not noise.)
+- **Further split: each state within a track is also corrected
+  independently, not just each track.** (Updated 2026-07-10, same session
+  as the predicted/GT split above.) `apply_fdr_correction()` partitions by
+  `(state_source, state)`, not just `state_source` — e.g. `predicted/on_fire`
+  and `predicted/aground` each get their own BH pass. This is a stronger
+  case than the predicted/GT split: different states within one source are
+  *mutually exclusive* one-vs-rest groups (an image is `aground` XOR
+  `on_fire`, never both), so there's essentially no risk of the same
+  underlying signal being double-counted across states the way there was a
+  real (if small, per the predicted/GT check above) risk between predicted
+  and GT. "Is there a signature element for on_fire" and "...for aground"
+  are separable questions, matching how the motivating example in this
+  ADR's Context section was framed from the start (a claim about `on_fire`
+  specifically, not about all four states as one shared claim).
+  Known cost: this shrinks each correction batch further (down to
+  roughly 15-40 tests per (source, state) pair instead of 150+ per source),
+  which recovers more power but means FDR control is a weaker guarantee in
+  practice at that scale — worth remembering when reading a "significant"
+  result from a run with very few images in that particular state.
 - **If Kruskal-Wallis comes back significant**, Dunn's test's pairwise
   outputs are the only place state-pair-specific conclusions should be drawn
   from for the typicality-score track — the omnibus Kruskal-Wallis p-value

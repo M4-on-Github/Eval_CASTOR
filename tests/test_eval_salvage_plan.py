@@ -109,6 +109,24 @@ def test_fdr_correction_applied_separately_per_state_source():
     assert predicted_test.p_corrected == pytest.approx(0.01)
 
 
+def test_fdr_correction_applied_separately_per_state_within_same_source():
+    # Different states within the SAME state_source are also corrected
+    # independently -- one-vs-rest groups for different states are mutually
+    # exclusive (an image is aground XOR on_fire, never both), so "is there
+    # a signature element for on_fire" and "...for aground" are separable
+    # questions, not one shared claim needing one combined FDR budget.
+    tests = [ElementStateTest(element="fireboat", state="on_fire", state_source="predicted",
+                               odds_ratio=10.0, p_value=0.01)]
+    tests += [
+        ElementStateTest(element=f"noise{i}", state="aground", state_source="predicted",
+                          odds_ratio=1.0, p_value=0.9)
+        for i in range(99)
+    ]
+    corrected = apply_fdr_correction(tests)
+    on_fire_test = next(t for t in corrected if t.state == "on_fire")
+    assert on_fire_test.p_corrected == pytest.approx(0.01)
+
+
 # ── run_omnibus_test ──────────────────────────────────────────────────────────
 
 def test_run_omnibus_test_triggers_dunn_when_significant():

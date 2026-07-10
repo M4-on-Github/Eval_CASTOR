@@ -61,20 +61,28 @@ def run_all_fisher_tests(df: pd.DataFrame, elements: list) -> list:
 
 
 def apply_fdr_correction(tests: list) -> list:
-    """Apply Benjamini-Hochberg separately within each state_source track
-    (predicted vs. gt). The two tracks answer different questions (does the
-    plan template on the model's own guess vs. on the true state) and are
-    reported as independently-labeled findings, not combined into one
-    claim -- see ADR-001. Correcting them separately was chosen over a
-    combined correction after checking this pipeline's actual predicted/gt
-    agreement rate (21-46% on real runs, not the near-total overlap a
-    combined correction would be protecting against)."""
+    """Apply Benjamini-Hochberg separately within each (state_source, state)
+    pair -- e.g. "predicted, on_fire" and "predicted, aground" each get
+    their own independent correction, not pooled together.
+
+    Two reasons this is split this finely, not just by state_source:
+    - predicted_state and gt_state answer different questions (does the
+      plan template on the model's own guess vs. on the true state) and are
+      reported as independently-labeled findings, not combined into one
+      claim -- see ADR-001. Checked this pipeline's actual predicted/gt
+      agreement rate (21-46% on real runs) rather than assuming the two
+      tracks were correlated enough to require a combined correction.
+    - Different states within the same source are mutually exclusive
+      one-vs-rest groups (an image is aground XOR on_fire, never both), so
+      "is there a signature element for on_fire" and "...for aground" are
+      separable questions too, not one shared claim needing one combined
+      FDR budget across all states."""
     if not tests:
         return tests
-    for source in {t.state_source for t in tests}:
-        source_tests = [t for t in tests if t.state_source == source]
-        corrected = benjamini_hochberg([t.p_value for t in source_tests])
-        for t, p_corr in zip(source_tests, corrected):
+    for source, state in {(t.state_source, t.state) for t in tests}:
+        group_tests = [t for t in tests if t.state_source == source and t.state == state]
+        corrected = benjamini_hochberg([t.p_value for t in group_tests])
+        for t, p_corr in zip(group_tests, corrected):
             t.p_corrected = p_corr
     return tests
 
