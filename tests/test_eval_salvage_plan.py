@@ -336,6 +336,39 @@ def test_build_report_lists_significant_association():
     assert "Kruskal-Wallis" in report
 
 
+def test_build_report_shows_prevalence_alongside_significance():
+    # A reader should be able to answer "how often does this actually
+    # appear in this state" straight from report.txt, not just tests.csv.
+    df = _make_synthetic_df()
+    tests = apply_fdr_correction(run_all_fisher_tests(df, elements=["fireboat"]))
+    omnibus_pred = run_omnibus_test(df, "typicality_score_pred", "predicted_state")
+    omnibus_gt = run_omnibus_test(df, "typicality_score_gt", "gt_state")
+
+    report = build_report(tests, omnibus_pred, omnibus_gt, "synthetic_run")
+
+    # fireboat is present in 23/25 on_fire records -- 92%.
+    assert "92" in report or "0.92" in report
+
+
+def test_build_report_lists_generic_elements_section():
+    tests = _generic_vs_discriminating_tests()
+    generic_df = identify_generic_elements(tests, min_overall_pct=0.3)
+    omnibus = {"H": None, "p_value": None, "dunn": None}
+
+    report = build_report(tests, omnibus, omnibus, "synthetic_run", generic_df=generic_df)
+
+    assert "generic_word" in report
+    generic_section = report.split("Generic")[-1]
+    assert "fireboat" not in generic_section
+
+
+def test_build_report_honest_when_no_generic_elements():
+    omnibus = {"H": None, "p_value": None, "dunn": None}
+    empty_generic_df = identify_generic_elements([], min_overall_pct=0.3)
+    report = build_report([], omnibus, omnibus, "empty_run", generic_df=empty_generic_df)
+    assert "no generic" in report.lower() or "none found" in report.lower()
+
+
 def test_build_report_honest_when_nothing_significant():
     tests = apply_fdr_correction([])
     df = pd.DataFrame({

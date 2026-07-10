@@ -227,7 +227,8 @@ def dunn_to_dataframe(omnibus_pred: dict, omnibus_gt: dict) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=["state_source", "group_a", "group_b", "p_value"])
 
 
-def build_report(tests: list, omnibus_pred: dict, omnibus_gt: dict, run_name: str) -> str:
+def build_report(tests: list, omnibus_pred: dict, omnibus_gt: dict, run_name: str,
+                  generic_df: pd.DataFrame = None) -> str:
     lines = [f"Salvage Plan Templating Analysis -- {run_name}", "=" * 70, ""]
 
     significant = [t for t in tests if t.p_corrected is not None and t.p_corrected < SIGNIFICANCE_THRESHOLD]
@@ -237,11 +238,15 @@ def build_report(tests: list, omnibus_pred: dict, omnibus_gt: dict, run_name: st
     )
     lines.append("")
     if significant:
-        lines.append("Significant associations:")
+        lines.append("Significant associations (pct_in_state/pct_out_state show raw frequency, independent of significance):")
         for t in sorted(significant, key=lambda t: t.p_corrected):
+            pct_in = _safe_pct(t.count_in_state, t.n_in_state)
+            pct_out = _safe_pct(t.count_out_state, t.n_out_state)
             lines.append(
                 f"  [{t.state_source:9s}] {t.element!r} vs {t.state}: "
-                f"odds_ratio={t.odds_ratio:.2f}  p={t.p_value:.4g}  p_corrected={t.p_corrected:.4g}"
+                f"odds_ratio={t.odds_ratio:.2f}  p={t.p_value:.4g}  p_corrected={t.p_corrected:.4g}  "
+                f"in_state={pct_in:.0%} ({t.count_in_state}/{t.n_in_state})  "
+                f"out_state={pct_out:.0%} ({t.count_out_state}/{t.n_out_state})"
             )
     else:
         lines.append(
@@ -264,6 +269,17 @@ def build_report(tests: list, omnibus_pred: dict, omnibus_gt: dict, run_name: st
             for d in omnibus["dunn"]:
                 lines.append(f"    {d['group_a']} vs {d['group_b']}: p={d['p_value']:.4g}")
         lines.append("")
+
+    lines.append("Generic / boilerplate elements (frequent overall, never significant for any single state):")
+    if generic_df is not None and len(generic_df) > 0:
+        for _, row in generic_df.iterrows():
+            lines.append(
+                f"  [{row['state_source']:9s}] {row['element']!r}: "
+                f"overall={row['overall_pct']:.0%} ({row['overall_count']}/{row['overall_n']})"
+            )
+    else:
+        lines.append("  No generic elements found at the configured --min-generic-pct threshold.")
+    lines.append("")
 
     return "\n".join(lines)
 
@@ -295,11 +311,15 @@ def process_run(run_name: str, min_generic_pct: float):
     dunn_csv = paths.dunn_path(run_name)
     dunn_to_dataframe(omnibus_pred, omnibus_gt).to_csv(dunn_csv, index=False)
 
+    generic_df = identify_generic_elements(tests, min_generic_pct)
     generic_csv = paths.generic_elements_path(run_name)
-    identify_generic_elements(tests, min_generic_pct).to_csv(generic_csv, index=False)
+    generic_df.to_csv(generic_csv, index=False)
 
     report_file = paths.report_path(run_name)
-    report_file.write_text(build_report(tests, omnibus_pred, omnibus_gt, run_name), encoding="utf-8")
+    report_file.write_text(
+        build_report(tests, omnibus_pred, omnibus_gt, run_name, generic_df=generic_df),
+        encoding="utf-8",
+    )
 
     print(f"  {run_name}: {len(tests)} tests -> {tests_csv}")
     print(f"  Omnibus -> {omnibus_csv}")
