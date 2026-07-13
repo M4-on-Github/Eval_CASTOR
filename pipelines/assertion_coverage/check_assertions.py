@@ -37,7 +37,7 @@ from shared.loaders import load_ground_truth, load_run
 # Paths
 # ---------------------------------------------------------------------------
 
-REGISTRY_PATH = EVAL_ROOT / "all_prompts" / "IMPROVED_assertion_registry.csv"
+REGISTRY_PATH = Path(__file__).parent / "IMPROVED_assertion_registry.csv"
 
 # ---------------------------------------------------------------------------
 # Constants

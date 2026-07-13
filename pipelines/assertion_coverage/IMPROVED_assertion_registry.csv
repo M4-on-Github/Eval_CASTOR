@@ -1,0 +1,51 @@
+id,casualty_type,assertion_text,checkable_keyword,discriminative
+A1,aground,"it may be able to refloat naturally on the next tide",natural tide refloat,low
+A2,aground,"Larger vessels may need lightering to reduce weight before refloat",lightering,medium
+A3,aground,"Deeper-draft vessels may need tug assistance to refloat",tug,low
+A4,aground,"A hard grounding may need dredging to clear a channel before refloat",dredging,medium
+A5,aground,"All tanks may need checking for fuel before any cutting or movement begins",fuel check,low
+A6,aground,"All tanks may need checking for hazardous cargo before any cutting or movement begins",hazardous cargo check,low
+A7,aground,"pulling force needed to free the vessel may depend on ground reaction and a friction coefficient specific to the seabed type",friction coefficient / seabed type,high
+A8,aground,"A neutral loading point may exist on the hull where shifting weight has no effect on the ground reaction",neutral loading point,high
+A9,aground,"A dedicated tide gauge may be used near the site to track ground reaction",tide gauge,high
+C1,capsized,"crew rescue may be prioritized before attempting to right the vessel",crew rescue first,low
+C2,capsized,"hand-over-hand technique without kicking",hand-over-hand egress,high
+C3,capsized,"stability check against minimum righting-arm and metacentric-height criteria",righting arm / metacentric height / GZ,high
+C4,capsized,"Trapped water may need to be cleared before righting",free surface / trapped water,medium
+C5,capsized,"manual or crane righting for small craft, controlled deballasting or parbuckling for larger ones",parbuckling,high
+C6,capsized,"upside-down refloating versus side refloating",upside-down refloating / side refloating,high
+C7,capsized,"Lifting loads may need to be kept controlled to avoid overturning further",controlled lifting load,low
+S1,sunken,"sequential testing for explosive gas, then oxygen, then toxic gas",sequential gas test,high
+S2,sunken,"recovery method may scale to depth: patch and refloat / cofferdam and pull / crane-and-barge sectioned removal",cofferdam / sectioned removal,high
+S3,sunken,"Fuel may need to be offloaded before disturbing the hull",fuel offload,low
+S4,sunken,"Cargo may need to be accounted for before disturbing the hull",cargo accounted for,low
+S5,sunken,"oil containment matched to how it behaves in the water",oil behavior-matched containment,medium
+S6,sunken,"Side-scan or electro-acoustic sonar to locate submerged oil",side-scan sonar,high
+S7,sunken,"Diver-directed recovery preferred over dredging, net environmental benefit analysis",net environmental benefit analysis / NEBA,high
+S8,sunken,"legacy or abandoned wreck ranked for pollution risk using a standardized risk-ranking method",risk-ranking method / RULET,high
+F1,on_fire,"space confirmed clear of personnel before activating fixed suppression",clear personnel before suppression,low
+F2,on_fire,"gas flooding for machinery spaces; foam for cargo decks",gas flooding vs foam by space,medium
+F3,on_fire,"fixed CO2 system two-stage release with pre-discharge alarm",two-stage CO2 release / pre-discharge alarm,high
+F4,on_fire,"water-soluble fuel or cargo fire requires alcohol-resistant foam",alcohol-resistant foam,high
+F5,on_fire,"emergency fire pump capacity confirmed before committing a team",fire pump capacity check,medium
+F6,on_fire,"fireboat monitors for external boundary cooling",boundary cooling,medium
+F7,on_fire,"superheated smoldering space risks backdraft if ventilated before cooling",backdraft,high
+F8,on_fire,"hull and stability reassessed once the fire is out",post-fire stability reassessment,medium
+X1,cross-cutting,"vessel's size and draft may scale the resources needed",size/draft scales resources,low
+X2,cross-cutting,"cargo or hazardous material present is reason for added caution",added caution for cargo/hazmat,low
+R1,resources,"harbor tugs for towing in sheltered water",harbor tug,low
+R2,resources,"ocean-going salvage tugs for towing in open water",ocean-going salvage tug,low
+R3,resources,"beach gear (anchor-wire-chain purchase systems) for controlled pulling",beach gear,high
+R4,resources,"floating cranes for lifting",floating crane,low
+R5,resources,"barges for sectional removal or lightering",barge,low
+R6,resources,"submersible pumps for dewatering",submersible pump,low
+R7,resources,"cofferdams or patching materials for hull repair",cofferdam,high
+R8,resources,"containment booms or skimmers for spill response",containment boom / skimmer,low
+R9,resources,"fireboats with external monitors for boundary cooling",fireboat monitor,medium
+R10,resources,"alcohol-resistant foam concentrate for polar-solvent fires",alcohol-resistant foam concentrate,high
+R11,resources,"dive and survey team for underwater assessment",dive and survey team,low
+R12,resources,"salvage engineer or naval architect for stability checks",salvage engineer / naval architect,medium
+R13,resources,"firefighting team for suppression and boundary cooling",firefighting team,low
+R14,resources,"rescue swimmers or boat crew for crew recovery",rescue swimmers,low
+R15,resources,"ordnance or hazmat specialist for older military or unknown-cargo vessels",ordnance / hazmat specialist,high
+R16,resources,"coordination with owner, authorities, pollution reporting channel, or commercial salvor",commercial salvor / pollution reporting,medium
