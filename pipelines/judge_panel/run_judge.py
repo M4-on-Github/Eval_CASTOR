@@ -10,10 +10,10 @@ cluster. See containers/submit_judge_job.sh for the SLURM invocation.
 
 Usage (inside container via submit_judge_job.sh):
   python3 run_judge.py \\
-      --model   qwen25_72b \\
-      --model-dir /data/$USER/qwen25-72b-instruct \\
-      --input   ../../results/castor_results/answers_baseline.jsonl \\
-      --out     ../../results/p5_judge/answers_baseline/ \\
+      --model   deepseek_r1_32b \\
+      --model-dir /data/$USER/deepseek-r1-distill-qwen-32b-awq \\
+      --input   /data/$USER/castor_results/answers_baseline.jsonl \\
+      --out     /data/$USER/castor_results/p5_judge/answers_baseline/ \\
       [--tp 1] \\
       [--limit N]
 """
@@ -47,6 +47,11 @@ def _coerce_list(val) -> list:
 _FENCE_RE = re.compile(r'^```(?:json)?\s*', re.MULTILINE)
 _FENCE_END_RE = re.compile(r'\s*```\s*$')
 _LATEX_RE = re.compile(r'\\([_\-/])')
+_THINK_RE = re.compile(r'<think>.*?</think>', re.DOTALL)
+_THINK_OPEN_RE = re.compile(r'<think>.*', re.DOTALL)
+# Matches the outermost {...} block — used to extract JSON from responses that
+# include preamble or trailing text (e.g. DeepSeek-R1 after the think block).
+_JSON_OBJECT_RE = re.compile(r'\{.*\}', re.DOTALL)
 
 
 # ---------------------------------------------------------------------------
@@ -70,20 +75,32 @@ def parse_judge_response(raw: str) -> dict:
     Returns a dict with keys: score, rationale, hallucinations, parse_ok,
     and optionally raw_response on failure.
     """
-    cleaned = _FENCE_RE.sub('', raw.strip())
+    cleaned = _THINK_RE.sub('', raw).strip()
+    cleaned = _THINK_OPEN_RE.sub('', cleaned).strip()
+    cleaned = _FENCE_RE.sub('', cleaned)
     cleaned = _FENCE_END_RE.sub('', cleaned).strip()
     cleaned = _LATEX_RE.sub(r'\1', cleaned)
 
-    try:
-        data = json.loads(cleaned)
-    except json.JSONDecodeError:
+    def _try_parse(s: str):
         try:
-            data = json.loads(cleaned, strict=False)
+            return json.loads(s)
         except json.JSONDecodeError:
-            return {
-                "score": None, "rationale": "", "hallucinations": [],
-                "parse_ok": False, "raw_response": raw[:500],
-            }
+            try:
+                return json.loads(s, strict=False)
+            except json.JSONDecodeError:
+                return None
+
+    data = _try_parse(cleaned)
+    if data is None:
+        # Model output has preamble/trailing text — extract the first {...} block.
+        m = _JSON_OBJECT_RE.search(cleaned)
+        if m:
+            data = _try_parse(m.group(0))
+    if data is None:
+        return {
+            "score": None, "rationale": "", "hallucinations": [],
+            "parse_ok": False, "raw_response": raw[:500],
+        }
 
     if not isinstance(data, dict):
         return {
@@ -132,41 +149,101 @@ def build_output_record(image: str, gt_state: str, pred_text: str,
 # vLLM batch inference (runs inside the container)
 # ---------------------------------------------------------------------------
 
+# vLLM guided-decoding schema — applied to the tokens AFTER </think> so the
+# final answer is structurally enforced to be valid JSON matching our rubric.
+_JUDGE_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "visual_alignment_rationale": {"type": "string", "maxLength": 600},
+        "hallucinations_detected":    {"type": "array", "items": {"type": "string"}},
+        "final_score":                {"type": "integer", "enum": [1, 2, 3]},
+    },
+    "required": ["visual_alignment_rationale", "hallucinations_detected", "final_score"],
+    "additionalProperties": False,
+}
+
 _MODEL_CONFIG = {
-    # Qwen: official AWQ 4-bit repo (~40 GB, 1 GPU). dtype="auto" detects AWQ.
-    "qwen25_72b":  {"tp": 1, "dir": "qwen25-72b-instruct-awq",        "quantization": None},
-    # DeepSeek: official BF16 repo + bitsandbytes INT8 at load time (~70 GB, 2 GPUs).
-    "deepseek_r1": {"tp": 2, "dir": "deepseek-r1-distill-llama-70b",  "quantization": "bitsandbytes"},
-    # GPT-OSS: BF16 MoE, 2 GPUs. dtype="auto" + trust_remote_code for custom arch.
-    "gptoss_120b": {"tp": 2, "dir": "gpt-oss-120b",                   "quantization": None},
+    # DeepSeek-R1-Distill-Qwen-32B AWQ: ~22 GB weights, 1 GPU.
+    # guided_json blocks <think> tokens from token 1 and enforces valid JSON output
+    # directly — avoids the 100% PARSE_FAIL seen when the 70B variant emitted prose
+    # reasoning outside <think> tags and exhausted max_tokens before reaching JSON.
+    "deepseek_r1_32b": {
+        "tp": 1, "dir": "deepseek-r1-distill-qwen-32b-awq",
+        "quantization": None, "max_model_len": 8192, "max_tokens": 1024,
+        "guided_json": _JUDGE_JSON_SCHEMA,
+    },
+    # GLM-4-32B-0414 GPTQ W4A16: ~22 GB weights, 1 GPU. GPTQ backend supports
+    # guided decoding via logit processors (no kernel conflict with marlin).
+    "glm4_32b": {
+        "tp": 1, "dir": "glm-4-32b-0414-gptq",
+        "quantization": None, "max_model_len": 4096, "max_tokens": 1024,
+        "guided_json": _JUDGE_JSON_SCHEMA,
+    },
+    # Atla Selene Mini 8B AWQ (self-quantized from AtlaAI/Selene-1-Mini-Llama-3.1-8B): ~7 GB.
+    # Purpose-built judge (LlamaForCausalLM backbone, #1 RewardBench at 8B class).
+    "selene_mini_8b": {
+        "tp": 1, "dir": "selene-1-mini-llama-3.1-8b-awq",
+        "quantization": None, "max_model_len": 4096, "max_tokens": 512,
+        "guided_json": _JUDGE_JSON_SCHEMA,
+    },
 }
 
 
 def _run_vllm_batch(user_prompts: list, model_dir: str, tp_size: int,
-                    quantization: str | None = None) -> list:
+                    pp_size: int = 1,
+                    quantization: str | None = None,
+                    max_model_len: int = 4096,
+                    max_tokens: int = 512,
+                    prefill: str | None = None,
+                    guided_json: dict | None = None,
+                    tokenizer_mode: str = "auto") -> list:
     """Load model once and score all prompts in one batch via vLLM."""
     from vllm import LLM, SamplingParams
 
-    print(f"  [vLLM] Loading model from {model_dir} (tp={tp_size}, quant={quantization or 'auto'}) ...")
+    print(f"  [vLLM] Loading model from {model_dir} (tp={tp_size}, pp={pp_size}, quant={quantization or 'auto'}, max_model_len={max_model_len}, guided_json={guided_json is not None}, tokenizer_mode={tokenizer_mode}) ...")
     llm = LLM(
         model=model_dir,
         tensor_parallel_size=tp_size,
-        dtype="auto",           # auto-detects AWQ/GPTQ from model config; use explicit quant below for BNB
+        pipeline_parallel_size=pp_size,
+        dtype="auto",
         quantization=quantization,
-        max_model_len=8192,
+        max_model_len=max_model_len,
         trust_remote_code=True,
         gpu_memory_utilization=0.90,
+        tokenizer_mode=tokenizer_mode,
     )
-    params = SamplingParams(temperature=0.0, max_tokens=512)
+    sampling_kwargs = {"temperature": 0.0, "max_tokens": max_tokens}
+    if guided_json is not None:
+        from vllm.sampling_params import GuidedDecodingParams
+        sampling_kwargs["guided_decoding"] = GuidedDecodingParams(json=guided_json)
+    params = SamplingParams(**sampling_kwargs)
 
-    conversations = [
-        [{"role": "system", "content": _SYSTEM_PROMPT},
-         {"role": "user",   "content": up}]
-        for up in user_prompts
-    ]
+    if prefill:
+        # vLLM's chat() passes add_generation_prompt=True internally, which
+        # conflicts with continue_final_message=True in transformers ≥4.44.
+        # Workaround: apply the chat template manually, append the prefill
+        # text, then call llm.generate() which has no such conflict.
+        from transformers import AutoTokenizer
+        tok = AutoTokenizer.from_pretrained(model_dir, trust_remote_code=True,
+                                            local_files_only=True)
+        raw_prompts = []
+        for up in user_prompts:
+            msgs = [{"role": "system", "content": _SYSTEM_PROMPT},
+                    {"role": "user",   "content": up}]
+            text = tok.apply_chat_template(msgs, tokenize=False,
+                                           add_generation_prompt=True)
+            raw_prompts.append(text + prefill)
+        print(f"  [vLLM] Scoring {len(raw_prompts)} records (prefill: {prefill!r}) ...")
+        outputs = llm.generate(raw_prompts, sampling_params=params)
+    else:
+        conversations = [
+            [{"role": "system", "content": _SYSTEM_PROMPT},
+             {"role": "user",   "content": up}]
+            for up in user_prompts
+        ]
+        print(f"  [vLLM] Scoring {len(conversations)} records ...")
+        outputs = llm.chat(conversations, sampling_params=params)
 
-    print(f"  [vLLM] Scoring {len(conversations)} records ...")
-    outputs = llm.chat(conversations, sampling_params=params)
     return [o.outputs[0].text for o in outputs]
 
 
@@ -181,8 +258,9 @@ def run(input_path: Path, gt_path: Path, out_dir: Path, model: str,
     run_name = input_path.stem
     out_path = out_dir / f"{run_name}_{model}.jsonl"
 
-    # Resume: collect already-scored images
-    done = set()
+    # Resume: collect already-scored images; rewrite file keeping only successes
+    # so that re-running after parse failures doesn't create duplicate entries.
+    done = {}  # image -> json line (string)
     if out_path.exists():
         with open(out_path, encoding="utf-8") as f:
             for line in f:
@@ -191,9 +269,18 @@ def run(input_path: Path, gt_path: Path, out_dir: Path, model: str,
                     try:
                         r = json.loads(line)
                         if r.get("parse_ok"):
-                            done.add(r["image"])
+                            done[r["image"]] = line
                     except json.JSONDecodeError:
                         pass
+        if done:
+            # Rewrite file with only successful records so failed ones don't
+            # accumulate on subsequent runs.
+            with open(out_path, "w", encoding="utf-8") as f:
+                for l in done.values():
+                    f.write(l + "\n")
+        else:
+            # No successes at all — start fresh.
+            out_path.unlink()
         print(f"  Resume: {len(done)} already scored.")
 
     gt = load_ground_truth(gt_path)
@@ -205,6 +292,7 @@ def run(input_path: Path, gt_path: Path, out_dir: Path, model: str,
     if not pending:
         print(f"  All {len(done)} records already scored — nothing to do.")
         return out_path
+
 
     print(f"  Scoring {len(pending)} records with {model} ...")
 
@@ -226,9 +314,19 @@ def run(input_path: Path, gt_path: Path, out_dir: Path, model: str,
     cfg = _MODEL_CONFIG.get(model, {})
     t0 = time.perf_counter()
     raw_responses = _run_vllm_batch(user_prompts, model_dir, tp_size,
-                                    quantization=cfg.get("quantization"))
+                                    pp_size=cfg.get("pp", 1),
+                                    quantization=cfg.get("quantization"),
+                                    max_model_len=cfg.get("max_model_len", 4096),
+                                    max_tokens=cfg.get("max_tokens", 512),
+                                    prefill=cfg.get("prefill"),
+                                    guided_json=cfg.get("guided_json"),
+                                    tokenizer_mode=cfg.get("tokenizer_mode", "auto"))
     total_elapsed = time.perf_counter() - t0
     per_s = total_elapsed / len(raw_responses) if raw_responses else 0.0
+
+    # Show first raw response so we can see exactly what the model outputs.
+    if raw_responses:
+        print(f"  [DEBUG] raw_responses[0] ({len(raw_responses[0])} chars): {raw_responses[0][:400]!r}")
 
     # Parse and append results
     errors = 0
@@ -244,6 +342,7 @@ def run(input_path: Path, gt_path: Path, out_dir: Path, model: str,
             if not parse_result["parse_ok"]:
                 errors += 1
                 print(f"  PARSE_FAIL [{i+1}/{len(pending)}] {image[-50:]}")
+                print(f"    raw ({len(raw)} chars): {raw[:600]!r}")
             elif (i + 1) % 100 == 0:
                 print(f"  [{i+1}/{len(pending)}] score={output_rec['score']}")
 
@@ -258,7 +357,7 @@ def main():
         description="Run one judge model over a CASTOR JSONL (runs inside Apptainer container)."
     )
     ap.add_argument("--model",     required=True, choices=list(_MODEL_CONFIG),
-                    help="Judge model key (qwen25_72b / deepseek_r1 / gptoss_120b)")
+                    help="Judge model key (deepseek_r1_32b / glm4_32b / selene_mini_8b)")
     ap.add_argument("--model-dir", required=True,
                     help="Absolute path to HuggingFace model weights directory")
     ap.add_argument("--tp",        type=int, default=None,

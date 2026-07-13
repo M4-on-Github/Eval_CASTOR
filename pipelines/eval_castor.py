@@ -74,7 +74,7 @@ def evaluate_run(records: list, gt_dict: dict, prompt_style: str,
     rows = []
     for rec in records:
         img  = rec["image"]
-        text = rec["text"]
+        text = rec.get("text", "")
         gt   = gt_dict.get(img, {})
 
         if pre_parsed_dict and img in pre_parsed_dict:

@@ -338,11 +338,14 @@ def panel_score_summary(consensus_path, run_name: str) -> dict:
     valid = [r for r in records if r.get("mean_score") is not None]
     n_flagged = sum(1 for r in records if r.get("consensus_status") == "flagged_for_review")
     n_error   = sum(1 for r in records if r.get("consensus_status") == "parse_error")
+    n_accurate = sum(1 for r in valid if r.get("judge_verdict") == "accurate")
 
-    per_class = {}
+    per_class_score = {}
+    per_class_acc   = {}
     for state in VALID_STATES:
-        subset = [r["mean_score"] for r in valid if r.get("gt_state") == state]
-        per_class[state] = round(sum(subset) / len(subset), 3) if subset else None
+        subset = [r for r in valid if r.get("gt_state") == state]
+        per_class_score[state] = round(sum(r["mean_score"] for r in subset) / len(subset), 3) if subset else None
+        per_class_acc[state]   = round(sum(1 for r in subset if r.get("judge_verdict") == "accurate") / len(subset), 3) if subset else None
 
     return {
         "run":              run_name,
@@ -351,11 +354,16 @@ def panel_score_summary(consensus_path, run_name: str) -> dict:
         "n_flagged":        n_flagged,
         "flagged_%":        round(n_flagged / len(records) * 100, 1) if records else None,
         "n_parse_error":    n_error,
+        "accuracy":         round(n_accurate / len(valid), 3) if valid else None,
         "mean_score":       round(sum(r["mean_score"] for r in valid) / len(valid), 3) if valid else None,
-        "mean_score_aground":  per_class.get("aground"),
-        "mean_score_capsized": per_class.get("capsized"),
-        "mean_score_on_fire":  per_class.get("on_fire"),
-        "mean_score_sunken":   per_class.get("sunken"),
+        "acc_aground":      per_class_acc.get("aground"),
+        "acc_capsized":     per_class_acc.get("capsized"),
+        "acc_on_fire":      per_class_acc.get("on_fire"),
+        "acc_sunken":       per_class_acc.get("sunken"),
+        "mean_score_aground":  per_class_score.get("aground"),
+        "mean_score_capsized": per_class_score.get("capsized"),
+        "mean_score_on_fire":  per_class_score.get("on_fire"),
+        "mean_score_sunken":   per_class_score.get("sunken"),
     }
 
 

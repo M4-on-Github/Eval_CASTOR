@@ -17,8 +17,8 @@ from statistics import mean, stdev
 EVAL_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(EVAL_ROOT))
 
-JUDGE_MODELS = ["gptoss_120b", "deepseek_r1", "qwen25_72b"]
-STD_FLAG_THRESHOLD = 0.8
+JUDGE_MODELS = ["deepseek_r1_32b", "glm4_32b", "selene_mini_8b"]
+STD_FLAG_THRESHOLD = 0.6
 
 
 # ---------------------------------------------------------------------------
@@ -61,10 +61,12 @@ def compute_consensus(image: str, gt_state: str, pred_text: str,
         mean_score = None
         score_std  = None
         status     = "parse_error"
+        verdict    = "no_score"
     else:
         mean_score = round(mean(valid), 3)
         score_std  = round(stdev(valid), 3) if len(valid) > 1 else 0.0
         status     = "flagged_for_review" if score_std > STD_FLAG_THRESHOLD else "consensus"
+        verdict    = "accurate" if mean_score >= 2.5 else "inaccurate"
 
     hallucination_union = list({
         h
@@ -83,16 +85,17 @@ def compute_consensus(image: str, gt_state: str, pred_text: str,
         "mean_score":         mean_score,
         "score_std":          score_std,
         "consensus_status":   status,
+        "judge_verdict":      verdict,       # "accurate" | "inaccurate" | "no_score"
         "hallucination_union": hallucination_union,
     }
 
 
 def aggregate_run(run_name: str, judge_dir: Path) -> tuple:
-    """Merge three judge JONLs and write consensus + flagged outputs.
+    """Merge five judge JONLs and write consensus + flagged outputs.
 
     Returns (consensus_path, flagged_path).
     """
-    # Load all three judge files
+    # Load all five judge files
     judge_data = {}
     for model in JUDGE_MODELS:
         p = judge_dir / f"{run_name}_{model}.jsonl"

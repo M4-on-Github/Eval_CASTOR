@@ -1,7 +1,10 @@
 Bootstrap: docker
-From: vllm/vllm-openai:v0.6.3
+From: vllm/vllm-openai:v0.8.5
 
-# Base image provides: Python 3.10, CUDA 12.1, vLLM 0.5.5, torch 2.3.1.
+# Base image provides: Python 3.12, CUDA 12.4, vLLM 0.8.5, torch 2.6.0.
+# Upgraded from v0.6.3: GptOssForCausalLM not in vLLM 0.6.3 registry.
+# vLLM 0.8.5 supports it, but requires transformers>=5.0 for gpt_oss model type.
+#
 # We add only the lightweight packages needed by run_judge.py and the
 # Eval_CASTOR shared utilities (pandas, scikit-learn) — everything GPU-heavy
 # is already present.
@@ -12,22 +15,48 @@ From: vllm/vllm-openai:v0.6.3
 
 %post
     # ── Extra packages required by the eval pipeline ──────────────────────────
-    # numpy must be pinned <2.0.0 BEFORE scikit-learn, which otherwise drags
-    # it to 2.5.x and breaks vllm 0.6.3 / outlines / numba at runtime.
-    pip install --no-cache-dir "numpy<2.0.0"
+    # scipy<1.14 pinned because scipy 1.14+ requires numpy>=2.0, which breaks vllm/outlines/numba.
+    # All packages in one resolver call so numpy<2.0.0 is respected globally.
+    # sentence-transformers added for Pipeline 6 Stage 2 (salvage plan element
+    # clustering) -- there is no Ollama on the cluster, so phrase embeddings
+    # come from a small local model (all-MiniLM-L6-v2) instead of an HTTP
+    # embeddings API. Runs on CPU; no extra GPU allocation needed for it.
     pip install --no-cache-dir \
+        "numpy<2.0.0" \
+        "scipy<1.14" \
         "pandas>=1.5,<3" \
-        "scikit-learn>=1.2,<2"
+        "scikit-learn>=1.2,<2" \
+        "sentence-transformers>=3.0"
+
+    # transformers>=5.x is required: gpt_oss model type was added in transformers 5.x.
+    # vLLM 0.8.5 still calls tokenizer.all_special_tokens_extended which was removed
+    # in transformers 5.x. Patch the one call site in vLLM to use getattr fallback.
+    pip install --no-cache-dir "transformers>=5.0"
+
+    python3 - <<'PATCHEOF'
+import pathlib, sys
+f = pathlib.Path("/usr/local/lib/python3.12/dist-packages/vllm/transformers_utils/tokenizer.py")
+code = f.read_text()
+old = "tokenizer.all_special_tokens_extended)"
+new = 'getattr(tokenizer, "all_special_tokens_extended", list(tokenizer.all_special_tokens)))'
+if old in code:
+    f.write_text(code.replace(old, new))
+    print(f"[patch] Replaced {code.count(old)} occurrence(s) of all_special_tokens_extended in vLLM tokenizer.py")
+else:
+    print("[patch] all_special_tokens_extended not found — already patched or line changed", file=sys.stderr)
+    sys.exit(1)
+PATCHEOF
 
     # ── Sanity check ──────────────────────────────────────────────────────────
     python3 -c "
-import vllm, torch, pandas, sklearn
+import vllm, torch, pandas, sklearn, sentence_transformers
 print('Container build check:')
-print(f'  vllm       : {vllm.__version__}')
-print(f'  torch      : {torch.__version__}')
-print(f'  CUDA       : {torch.version.cuda}')
-print(f'  pandas     : {pandas.__version__}')
-print(f'  sklearn    : {sklearn.__version__}')
+print(f'  vllm                 : {vllm.__version__}')
+print(f'  torch                : {torch.__version__}')
+print(f'  CUDA                 : {torch.version.cuda}')
+print(f'  pandas               : {pandas.__version__}')
+print(f'  sklearn              : {sklearn.__version__}')
+print(f'  sentence_transformers: {sentence_transformers.__version__}')
 assert torch.version.cuda, 'CUDA not compiled into torch'
 print('OK')
 "
@@ -45,8 +74,9 @@ print('OK')
 
 %labels
     Project      CASTOR_JUDGE_PANEL
-    Base         vllm/vllm-openai:v0.6.3
-    vLLM         0.6.3
-    CUDA         12.1
-    Models       Qwen2.5-72B-Instruct / DeepSeek-R1-Distill-Llama-70B / gpt-oss-120b
+    Base         vllm/vllm-openai:v0.8.5
+    vLLM         0.8.5
+    CUDA         12.4
+    P5_Judges    DeepSeek-R1-32B-AWQ / GLM-4-32B-GPTQ / Selene-1-Mini-8B-AWQ
+    P6_Models    Qwen2.5-72B-Instruct-AWQ / all-MiniLM-L6-v2
     Use          apptainer exec --containall --nv --bind /data/$USER:/data/$USER

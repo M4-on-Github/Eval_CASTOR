@@ -2,16 +2,16 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # CASTOR Judge Panel — single-model SLURM batch script.
 #
-# Do NOT call directly with sbatch — use submit_judges.sh instead.
-# submit_judges.sh sets --gpus and --mem correctly per model, then passes
+# Do NOT call directly with sbatch — use judge_panel_submit.sh instead.
+# judge_panel_submit.sh sets --gpus and --mem correctly per model, then passes
 # the MODEL and RUN_NAME as positional arguments.
 #
 # Resources allocated by submit_judges.sh:
-#   qwen25_72b  : --gpus=1 --mem=52G
-#   deepseek_r1 : --gpus=1 --mem=52G
-#   gptoss_120b : --gpus=2 --mem=104G
+#   deepseek_r1_32b  : --gpus=1 --mem=52G
+#   glm4_32b         : --gpus=1 --mem=52G
+#   selene_mini_8b   : --gpus=1 --mem=16G
 #
-# All three jobs share this same script; the GPU count is set at submission.
+# All five jobs share this same script; the GPU/mem counts are set at submission.
 # ─────────────────────────────────────────────────────────────────────────────
 #SBATCH -p pleiades
 #SBATCH --constraint=RTX6000ADA
@@ -67,17 +67,17 @@ fi
 
 # ── Model config ──────────────────────────────────────────────────────────────
 case "$MODEL" in
-    qwen25_72b)
-        MODEL_DIR="$DATA_DIR/qwen25-72b-instruct"
+    deepseek_r1_32b)
+        MODEL_DIR="$DATA_DIR/deepseek-r1-distill-qwen-32b-awq"
         TP_SIZE=1
         ;;
-    deepseek_r1)
-        MODEL_DIR="$DATA_DIR/deepseek-r1-distill-llama-70b"
+    glm4_32b)
+        MODEL_DIR="$DATA_DIR/glm-4-32b-0414-gptq"
         TP_SIZE=1
         ;;
-    gptoss_120b)
-        MODEL_DIR="$DATA_DIR/gpt-oss-120b"
-        TP_SIZE=2
+    selene_mini_8b)
+        MODEL_DIR="$DATA_DIR/selene-1-mini-llama-3.1-8b-awq"
+        TP_SIZE=1
         ;;
     *)
         echo "ERROR: unknown model '$MODEL'" >&2

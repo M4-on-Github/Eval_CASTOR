@@ -8,7 +8,7 @@
 #
 # No GPU required — runs on any pleiades node.
 #
-# Do NOT call directly — submitted by submit_judges.sh with the appropriate
+# Do NOT call directly — submitted by judge_panel_submit.sh with the appropriate
 # --dependency flag.
 # ─────────────────────────────────────────────────────────────────────────────
 #SBATCH -p pleiades
@@ -39,10 +39,14 @@ if [ ! -d "$JUDGE_DIR" ]; then
     exit 1
 fi
 
+SIF="$DATA_DIR/castor_judge.sif"
+if [ ! -f "$SIF" ]; then
+    echo "ERROR: container SIF not found: $SIF — run build_judge_container.sh first" >&2
+    exit 1
+fi
+
 # ── Aggregation ───────────────────────────────────────────────────────────────
-# Runs on the host Python (no container needed — pure pandas/json only).
-# Requires: python3 + pandas + scikit-learn in the host environment.
-# On pleiades, use the system Python or activate the user conda env first.
+# aggregate.py uses only stdlib (json, statistics) — runs on bare host Python.
 python3 "$REPO/pipelines/judge_panel/aggregate.py" \
     --run "$RUN_NAME" \
     --dir "$JUDGE_DIR"
@@ -54,10 +58,19 @@ if [ ! -f "$CONSENSUS_FILE" ]; then
     exit 1
 fi
 
+# pandas is only available inside the container (not on the bare cluster Python).
 # Export shell vars so the Python here-doc can reach them via os.environ.
 # (Single-quoted heredoc does not expand shell variables, so we pass via env.)
-export REPO RUN_NAME
-python3 - <<'PYEOF'
+apptainer exec \
+    --containall \
+    --bind "$DATA_DIR:$DATA_DIR" \
+    --bind "$REPO:$REPO" \
+    --env PYTHONUNBUFFERED=1 \
+    --env REPO="$REPO" \
+    --env RUN_NAME="$RUN_NAME" \
+    --env USER="$USER" \
+    "$SIF" \
+    python3 - <<'PYEOF'
 import sys, os
 from pathlib import Path
 

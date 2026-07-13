@@ -10,8 +10,14 @@
 #   bash containers/build_judge_container.sh [--model MODEL] [--force]
 #
 #   --model MODEL    Download only this model's weights after building.
-#                    One of: qwen25_72b | deepseek_r1 | gptoss_120b | all
+#                    One of: qwen25_72b | deepseek_r1 | salvage_embed | all
 #                    Default: all
+#                    (qwen25_72b + deepseek_r1 = P6 Stage 1 extraction models;
+#                     salvage_embed = sentence-transformers/all-MiniLM-L6-v2,
+#                     used by Pipeline 6 Stage 2 clustering -- no Ollama on
+#                     the cluster, see pipelines/salvage_analysis/normalize.py)
+#                    NOTE: P5 judge models (deepseek_r1_32b, glm4_32b, etc.)
+#                    are downloaded by judge_panel_submit.sh, not here.
 #   --force          Rebuild the SIF even if hash matches.
 #
 # Run from ~/Eval_CASTOR/:
@@ -19,13 +25,27 @@
 #   bash containers/build_judge_container.sh --model qwen25_72b
 #
 # Submit as a SLURM job (CPU node, no GPU needed for build):
-#   sbatch --partition=pleiades --cpus-per-task=8 --mem=32G --time=2:00:00 \
+#   sbatch --partition=pleiades --cpus-per-task=8 --mem=64G --time=2:00:00 \
 #          --job-name=build_judge --output=/data/$USER/logs/build_judge_%j.out \
 #          containers/build_judge_container.sh
+#
+# NOTE: --mem=64G is required for vLLM 0.8.x. mksquashfs loads the full
+# uncompressed image into /tmp (RAM-backed on most nodes) to compress it.
+# APPTAINER_TMPDIR is set below to redirect that to the NAS instead.
 # ─────────────────────────────────────────────────────────────────────────────
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# When sbatch stages this script to /var/spool/slurmd/jobXXX/, BASH_SOURCE[0]
+# resolves to the spool copy — but container_judge.def is only in the real repo.
+# Use SLURM_SUBMIT_DIR (the directory sbatch was called from) when inside an
+# actual SLURM job; fall back to BASH_SOURCE[0] for interactive runs.
+# The contamination guard is checking SLURM_JOB_ID: stale SLURM_SUBMIT_DIR in
+# an interactive shell never has SLURM_JOB_ID set.
+if [ -n "${SLURM_JOB_ID:-}" ] && [ -n "${SLURM_SUBMIT_DIR:-}" ]; then
+    SCRIPT_DIR="$(cd "${SLURM_SUBMIT_DIR}/containers" && pwd)"
+else
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+fi
 REPO="$(cd "$SCRIPT_DIR/.." && pwd)"
 DATA_DIR="/data/$USER"
 LOGS_DIR="$DATA_DIR/logs"
@@ -59,10 +79,15 @@ echo "==========================================="
 DEF_HASH=$(sha256sum "$DEF" | cut -d' ' -f1)
 SIF_HASH_FILE="$SIF.def.sha256"
 
+# Redirect mksquashfs temp space from RAM-backed /tmp to the NAS so that large
+# images (vLLM 0.8.x is ~3× bigger than 0.6.3) don't OOM during squashfs creation.
+export APPTAINER_TMPDIR="$DATA_DIR/apptainer_tmp"
+mkdir -p "$APPTAINER_TMPDIR"
+
 if $FORCE || [ ! -f "$SIF" ] || [ ! -f "$SIF_HASH_FILE" ] || \
    [ "$DEF_HASH" != "$(cat "$SIF_HASH_FILE" 2>/dev/null)" ]; then
     echo "[$(date)] Building $SIF (def hash: $DEF_HASH) ..."
-    apptainer build --fakeroot "$SIF" "$DEF"
+    apptainer build --force --fakeroot "$SIF" "$DEF"
     echo "$DEF_HASH" > "$SIF_HASH_FILE"
     echo "[$(date)] Container built successfully."
 else
@@ -86,12 +111,16 @@ download_model() {
     echo "[$(date)] [$LABEL] Downloading $HF_REPO → $LOCAL_DIR ..."
     apptainer exec --containall --nv \
         --bind "$DATA_DIR:$DATA_DIR" \
+        --env HF_HOME="$HF_HOME" \
+        --env HF_TOKEN="${HF_TOKEN:-}" \
         "$SIF" \
         python3 -c "
+import os
 from huggingface_hub import snapshot_download
 snapshot_download(
     repo_id='$HF_REPO',
     local_dir='$LOCAL_DIR',
+    token=os.environ.get('HF_TOKEN') or None,
     ignore_patterns=['*.pt', 'original/**'],
 )
 print('Download complete.')
@@ -110,18 +139,19 @@ case "$MODEL_FILTER" in
                        "qwen25-72b-instruct-awq" "Qwen2.5-72B-AWQ"
         ;;&
     deepseek_r1|all)
-        # Official BF16 repo; loaded with bitsandbytes INT8 at runtime (~70 GB, 2 GPUs).
-        download_model "deepseek-ai/DeepSeek-R1-Distill-Llama-70B" \
-                       "deepseek-r1-distill-llama-70b" "DeepSeek-R1-70B"
+        # Community AWQ 4-bit repo (~40 GB, fits on 1× RTX 6000 Ada).
+        download_model "Valdemardi/DeepSeek-R1-Distill-Llama-70B-AWQ" \
+                       "deepseek-r1-distill-llama-70b-awq" "DeepSeek-R1-70B-AWQ"
         ;;&
-    gptoss_120b|all)
-        # NOTE: gpt_oss architecture not supported by vLLM 0.5.5.
-        # Skipping until container is rebuilt with a newer vLLM version.
-        echo "[SKIP] gptoss_120b: unsupported by vLLM 0.5.5 — see containers/NOTES.md"
+    salvage_embed|all)
+        # Small embedding model for Pipeline 6 Stage 2 clustering (~90 MB,
+        # CPU-only at inference time) -- see normalize.py's --backend local.
+        download_model "sentence-transformers/all-MiniLM-L6-v2" \
+                       "all-minilm-l6-v2" "Salvage-Embed-MiniLM"
         ;;
     *)
         echo "ERROR: unknown --model value '$MODEL_FILTER'"
-        echo "       Use: qwen25_72b | deepseek_r1 | gptoss_120b | all"
+        echo "       Use: qwen25_72b | deepseek_r1 | salvage_embed | all"
         exit 1
         ;;
 esac
