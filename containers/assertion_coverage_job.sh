@@ -45,7 +45,7 @@ echo "==========================================="
 nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader || true
 
 # ── Inputs ───────────────────────────────────────────────────────────────────
-INPUT_JSONL="$DATA_DIR/castor_results/${RUN_NAME}.jsonl"
+INPUT_JSONL="$REPO/p7_to_check/${RUN_NAME}.jsonl"
 if [ ! -f "$INPUT_JSONL" ]; then
     echo "ERROR: inference JSONL not found: $INPUT_JSONL" >&2
     exit 1

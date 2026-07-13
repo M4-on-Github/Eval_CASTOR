@@ -3,20 +3,23 @@
 # Pipeline 7 (assertion coverage) — orchestration script.
 #
 # Submits one SLURM job array (one task per run) that runs check_assertions.py
-# for each inference JSONL in /data/$USER/castor_results/ using Selene 8B AWQ.
+# for each inference JSONL staged in p7_to_check/ using Selene 8B AWQ.
 # Resume-safe: tasks skip already-processed images inside check_assertions.py.
+#
+# Drop the full-answer JSONL(s) you want scored into p7_to_check/ first
+# (e.g. p7_to_check/answers_baseline.jsonl), then:
 #
 # Run from ~/Eval_CASTOR/ on the head node (head1.condo.cs.cmu.edu):
 #
-#   Process every run in castor_results/:
+#   Process every run staged in p7_to_check/:
 #     bash containers/submit_assertion_coverage.sh
 #
-#   Process just one specific run:
+#   Process just one specific run (must be in p7_to_check/):
 #     bash containers/submit_assertion_coverage.sh --run answers_baseline
 #
 # Arguments:
 #   --run NAME    (optional) Process only this run name (no .jsonl extension).
-#                 Omit to discover and process every *.jsonl in castor_results/.
+#                 Omit to discover and process every *.jsonl in p7_to_check/.
 #
 # Prerequisites:
 #   The castor_judge.sif container must already be built:
@@ -40,7 +43,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$SCRIPT_DIR/.." && pwd)"
 DATA_DIR="/data/$USER"
 LOGS_DIR="$DATA_DIR/logs"
-RESULTS_DIR="$DATA_DIR/castor_results"
+TO_CHECK_DIR="$REPO/p7_to_check"
 mkdir -p "$LOGS_DIR"
 
 RUN_NAME=""
@@ -63,26 +66,28 @@ if [ ! -f "$SIF" ]; then
     exit 1
 fi
 
-if [ ! -d "$RESULTS_DIR" ]; then
-    echo "ERROR: castor_results directory not found: $RESULTS_DIR" >&2
+if [ ! -d "$TO_CHECK_DIR" ]; then
+    echo "ERROR: staging directory not found: $TO_CHECK_DIR" >&2
+    echo "       Create it and drop the JONLs you want scored there." >&2
     exit 1
 fi
 
 # ── Discover runs ─────────────────────────────────────────────────────────────
 if [ -n "$RUN_NAME" ]; then
-    if [ ! -f "$RESULTS_DIR/${RUN_NAME}.jsonl" ]; then
-        echo "ERROR: $RESULTS_DIR/${RUN_NAME}.jsonl not found" >&2
+    if [ ! -f "$TO_CHECK_DIR/${RUN_NAME}.jsonl" ]; then
+        echo "ERROR: $TO_CHECK_DIR/${RUN_NAME}.jsonl not found" >&2
         exit 1
     fi
     RUN_NAMES=("$RUN_NAME")
 else
     mapfile -t RUN_NAMES < <(
-        find "$RESULTS_DIR" -maxdepth 1 -name '*.jsonl' -printf '%f\n' 2>/dev/null \
+        find "$TO_CHECK_DIR" -maxdepth 1 -name '*.jsonl' -printf '%f\n' 2>/dev/null \
             | sed 's/\.jsonl$//' \
             | sort
     )
     if [ "${#RUN_NAMES[@]}" -eq 0 ]; then
-        echo "ERROR: no *.jsonl files found in $RESULTS_DIR" >&2
+        echo "ERROR: no *.jsonl files found in $TO_CHECK_DIR" >&2
+        echo "       Drop full-answer run JSONLs there first." >&2
         exit 1
     fi
 fi

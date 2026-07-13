@@ -85,10 +85,10 @@ python pipelines/eval_salvage_plan.py --run <run_name> --min-generic-pct <float>
 
 For each VLM salvage plan, checks per-assertion whether the plan addresses each domain-specific concept from `all_prompts/IMPROVED_assertion_registry.csv`. Uses Selene 8B, one LLM call per (image, assertion) pair (~3000 calls/run, ~5–10 min with vLLM prefix caching). Also keyword-scans for wrong-casualty-type terminology (contamination).
 ```bash
-# All runs in castor_results/ at once:
+# Drop the JONLs you want scored into p7_to_check/ first, then:
 bash containers/submit_assertion_coverage.sh
 
-# Single run:
+# Single run (must be in p7_to_check/):
 bash containers/submit_assertion_coverage.sh --run answers_baseline
 
 # Smoke test (10 images):
@@ -122,7 +122,7 @@ Key output columns: `coverage_pct` (all relevant assertions), `high_disc_pct` (h
 | P4 input | `../../results/separated_into_parts/separated_into_parts_*/` |
 | P5 input | `/data/$USER/castor_results/<run>.jsonl` (cluster) |
 | P6 input | `p6_plans_to_judge/*.jsonl` (inside repo — curated staging area) |
-| P7 input | `/data/$USER/castor_results/<run>.jsonl` (cluster) |
+| P7 input | `p7_to_check/*.jsonl` (inside repo — curated staging area, like P6) |
 | P5 output | `/data/$USER/castor_results/p5_judge/<run>/` |
 | P6 output | `results/p6_salvage_plan/<run>/` (repo-local, gitignored) |
 | P7 output | `results/p7_assertion_coverage/<run>/` (repo-local, gitignored) |
@@ -154,6 +154,7 @@ Eval_CASTOR/
     assertion_coverage/
       check_assertions.py   ← P7: per-assertion LLM coverage + contamination keyword scan
   p6_plans_to_judge/        ← P6 input staging (drop run JSONLs here)
+  p7_to_check/              ← P7 input staging (drop run JSONLs here)
   containers/
     container_judge.def           ← Apptainer def: vLLM 0.8.5 + eval deps
     build_judge_container.sh      ← build SIF + download model weights
