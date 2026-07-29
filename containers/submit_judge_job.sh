@@ -55,8 +55,8 @@ export HF_HOME="$DATA_DIR/.cache/huggingface"
 export TRANSFORMERS_CACHE="$DATA_DIR/.cache/huggingface"
 mkdir -p "$HF_HOME"
 
-INPUT_JSONL="$DATA_DIR/castor_results/${RUN_NAME}.jsonl"
-OUT_DIR="$DATA_DIR/castor_results/p5_judge/${RUN_NAME}"
+INPUT_JSONL="$REPO/p5_to_judge/${RUN_NAME}.jsonl"
+OUT_DIR="$REPO/results/p5_judge/${RUN_NAME}"
 GT_CSV="$REPO/human_ground_truth_label/human_gt.csv"
 mkdir -p "$OUT_DIR"
 

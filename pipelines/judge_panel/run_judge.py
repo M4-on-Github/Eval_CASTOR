@@ -24,6 +24,7 @@ import re
 import sys
 import time
 from pathlib import Path
+from typing import Optional
 
 EVAL_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(EVAL_ROOT))
@@ -113,14 +114,24 @@ def parse_judge_response(raw: str) -> dict:
         return {
             "score": None, "rationale": str(data.get("visual_alignment_rationale", "")),
             "hallucinations": _coerce_list(data.get("hallucinations_detected")),
+            "state_correct": None, "vessel_type_correct": None,
+            "size_correct": None, "cargo_correct": None,
             "parse_ok": False, "raw_response": raw[:500],
         }
 
+    def _bool(key) -> bool | None:
+        v = data.get(key)
+        return bool(v) if isinstance(v, bool) else None
+
     return {
-        "score": int(score),
-        "rationale": str(data.get("visual_alignment_rationale", "")),
-        "hallucinations": _coerce_list(data.get("hallucinations_detected")),
-        "parse_ok": True,
+        "score":               int(score),
+        "rationale":           str(data.get("visual_alignment_rationale", "")),
+        "hallucinations":      _coerce_list(data.get("hallucinations_detected")),
+        "state_correct":       _bool("state_correct"),
+        "vessel_type_correct": _bool("vessel_type_correct"),
+        "size_correct":        _bool("size_correct"),
+        "cargo_correct":       _bool("cargo_correct"),
+        "parse_ok":            True,
     }
 
 
@@ -129,16 +140,20 @@ def build_output_record(image: str, gt_state: str, pred_text: str,
                         parse_result: dict, elapsed_s: float) -> dict:
     """Assemble the final per-sample output record."""
     rec = {
-        "image":             image,
-        "gt_state":          gt_state,
-        "pred_text":         pred_text,
-        "verbosity_flagged": verbosity_flagged,
-        "judge_model":       judge_model,
-        "score":             parse_result["score"],
-        "rationale":         parse_result.get("rationale", ""),
-        "hallucinations":    parse_result.get("hallucinations", []),
-        "parse_ok":          parse_result["parse_ok"],
-        "elapsed_s":         round(elapsed_s, 3),
+        "image":               image,
+        "gt_state":            gt_state,
+        "pred_text":           pred_text,
+        "verbosity_flagged":   verbosity_flagged,
+        "judge_model":         judge_model,
+        "score":               parse_result["score"],
+        "rationale":           parse_result.get("rationale", ""),
+        "hallucinations":      parse_result.get("hallucinations", []),
+        "state_correct":       parse_result.get("state_correct"),
+        "vessel_type_correct": parse_result.get("vessel_type_correct"),
+        "size_correct":        parse_result.get("size_correct"),
+        "cargo_correct":       parse_result.get("cargo_correct"),
+        "parse_ok":            parse_result["parse_ok"],
+        "elapsed_s":           round(elapsed_s, 3),
     }
     if not parse_result["parse_ok"] and "raw_response" in parse_result:
         rec["raw_response"] = parse_result["raw_response"]
@@ -156,9 +171,17 @@ _JUDGE_JSON_SCHEMA = {
     "properties": {
         "visual_alignment_rationale": {"type": "string", "maxLength": 600},
         "hallucinations_detected":    {"type": "array", "items": {"type": "string"}},
+        "state_correct":              {"type": "boolean"},
+        "vessel_type_correct":        {"type": "boolean"},
+        "size_correct":               {"type": "boolean"},
+        "cargo_correct":              {"type": "boolean"},
         "final_score":                {"type": "integer", "enum": [1, 2, 3]},
     },
-    "required": ["visual_alignment_rationale", "hallucinations_detected", "final_score"],
+    "required": [
+        "visual_alignment_rationale", "hallucinations_detected",
+        "state_correct", "vessel_type_correct", "size_correct", "cargo_correct",
+        "final_score",
+    ],
     "additionalProperties": False,
 }
 
@@ -191,11 +214,11 @@ _MODEL_CONFIG = {
 
 def _run_vllm_batch(user_prompts: list, model_dir: str, tp_size: int,
                     pp_size: int = 1,
-                    quantization: str | None = None,
+                    quantization: Optional[str] = None,
                     max_model_len: int = 4096,
                     max_tokens: int = 512,
-                    prefill: str | None = None,
-                    guided_json: dict | None = None,
+                    prefill: Optional[str] = None,
+                    guided_json: Optional[dict] = None,
                     tokenizer_mode: str = "auto") -> list:
     """Load model once and score all prompts in one batch via vLLM."""
     from vllm import LLM, SamplingParams
@@ -252,7 +275,7 @@ def _run_vllm_batch(user_prompts: list, model_dir: str, tp_size: int,
 # ---------------------------------------------------------------------------
 
 def run(input_path: Path, gt_path: Path, out_dir: Path, model: str,
-        model_dir: str, tp_size: int, limit: int | None):
+        model_dir: str, tp_size: int, limit: Optional[int]):
 
     out_dir.mkdir(parents=True, exist_ok=True)
     run_name = input_path.stem

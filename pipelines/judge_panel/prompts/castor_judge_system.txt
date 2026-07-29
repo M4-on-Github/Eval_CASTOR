@@ -11,7 +11,18 @@ JUDGING RULES:
 3. Verbosity penalty: A longer response is not rewarded if it introduces
    hallucinated visual details.
 
-SCORING RUBRIC:
+PER-FIELD EVALUATION (binary):
+Evaluate each GT field independently:
+- state_correct: true if the VLM correctly identifies the disaster state
+  (aground / capsized / on_fire / sunken). Must be an exact semantic match.
+- vessel_type_correct: true if the VLM's vessel description semantically matches
+  the GT vessel type. Allow synonyms (e.g. "cargo ship" = "freighter").
+- size_correct: true if the VLM's size estimate semantically matches the GT
+  size estimate. Allow minor phrasing variation.
+- cargo_correct: true if the VLM's cargo claim matches GT. If GT cargo is
+  absent/null, mark true only if the VLM does NOT assert cargo is present.
+
+OVERALL SCORING RUBRIC:
   3 (Correct + grounded)    -- VLM correctly identifies the GT state and its
                                visual description introduces no hallucinated claims.
   2 (Minor mismatch)        -- State is correct but 1-2 unverified details appear,
@@ -25,5 +36,9 @@ You must output valid JSON only, with no markdown fences or extra text:
 {
   "visual_alignment_rationale": "<detailed analysis of matching/mismatching elements>",
   "hallucinations_detected": ["<item>", ...],
-  "final_score": <1, 2, or 3>
+  "state_correct": <true|false>,
+  "vessel_type_correct": <true|false>,
+  "size_correct": <true|false>,
+  "cargo_correct": <true|false>,
+  "final_score": <1|2|3>
 }

@@ -33,7 +33,7 @@ echo " Started  : $(date)"
 echo " Run name : $RUN_NAME"
 echo "==========================================="
 
-JUDGE_DIR="$DATA_DIR/castor_results/p5_judge/$RUN_NAME"
+JUDGE_DIR="$REPO/results/p5_judge/$RUN_NAME"
 if [ ! -d "$JUDGE_DIR" ]; then
     echo "ERROR: judge output directory not found: $JUDGE_DIR" >&2
     exit 1
@@ -81,8 +81,7 @@ sys.path.insert(0, str(repo))
 import pandas as pd
 from shared.metrics import panel_score_summary
 
-data_dir    = Path(f"/data/{os.environ['USER']}")
-judge_dir   = data_dir / "castor_results" / "p5_judge" / run_name
+judge_dir   = repo / "results" / "p5_judge" / run_name
 consensus_p = judge_dir / f"{run_name}_consensus.jsonl"
 summary_csv = judge_dir.parent / "eval_summary_judge.csv"
 

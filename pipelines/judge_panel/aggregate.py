@@ -13,12 +13,14 @@ import json
 import sys
 from pathlib import Path
 from statistics import mean, stdev
+from typing import Optional
 
 EVAL_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(EVAL_ROOT))
 
 JUDGE_MODELS = ["deepseek_r1_32b", "glm4_32b", "selene_mini_8b"]
 STD_FLAG_THRESHOLD = 0.6
+FIELD_KEYS = ["state_correct", "vessel_type_correct", "size_correct", "cargo_correct"]
 
 
 # ---------------------------------------------------------------------------
@@ -45,13 +47,15 @@ def load_judge_jsonl(path: Path) -> dict:
 def compute_consensus(image: str, gt_state: str, pred_text: str,
                       verbosity_flagged: bool,
                       scores: dict, rationales: dict,
-                      hallucinations: dict) -> dict:
+                      hallucinations: dict,
+                      field_votes: Optional[dict] = None) -> dict:
     """Compute panel consensus from per-model scores.
 
     Args:
-        scores:        {model -> score_int_or_None}
-        rationales:    {model -> rationale_str}
-        hallucinations:{model -> [str, ...]}
+        scores:      {model -> score_int_or_None}
+        rationales:  {model -> rationale_str}
+        hallucinations: {model -> [str, ...]}
+        field_votes: {field_key -> {model -> bool_or_None}}
 
     Returns a consensus record dict.
     """
@@ -74,20 +78,34 @@ def compute_consensus(image: str, gt_state: str, pred_text: str,
         for h in (model_hallus or [])
     })
 
-    return {
-        "image":              image,
-        "gt_state":           gt_state,
-        "pred_text":          pred_text,
-        "verbosity_flagged":  verbosity_flagged,
-        "scores":             scores,
-        "rationales":         rationales,
-        "hallucinations":     hallucinations,
-        "mean_score":         mean_score,
-        "score_std":          score_std,
-        "consensus_status":   status,
-        "judge_verdict":      verdict,       # "accurate" | "inaccurate" | "no_score"
+    # Per-field majority vote: True if ≥ ceil(n/2 + 1) judges voted True
+    field_consensus = {}
+    if field_votes:
+        for fk in FIELD_KEYS:
+            votes = [v for v in field_votes.get(fk, {}).values() if v is not None]
+            if votes:
+                field_consensus[fk] = sum(1 for v in votes if v) >= (len(votes) / 2 + 0.5)
+            else:
+                field_consensus[fk] = None
+
+    rec = {
+        "image":               image,
+        "gt_state":            gt_state,
+        "pred_text":           pred_text,
+        "verbosity_flagged":   verbosity_flagged,
+        "scores":              scores,
+        "rationales":          rationales,
+        "hallucinations":      hallucinations,
+        "mean_score":          mean_score,
+        "score_std":           score_std,
+        "consensus_status":    status,
+        "judge_verdict":       verdict,
         "hallucination_union": hallucination_union,
     }
+    if field_consensus:
+        rec["field_votes"]     = field_votes
+        rec["field_consensus"] = field_consensus
+    return rec
 
 
 def aggregate_run(run_name: str, judge_dir: Path) -> tuple:
@@ -125,8 +143,23 @@ def aggregate_run(run_name: str, judge_dir: Path) -> tuple:
         rationales = {m: judge_data[m].get(img, {}).get("rationale", "") for m in JUDGE_MODELS}
         hallus = {m: judge_data[m].get(img, {}).get("hallucinations", []) for m in JUDGE_MODELS}
 
+        field_votes = {
+            fk: {m: judge_data[m].get(img, {}).get(fk) for m in JUDGE_MODELS}
+            for fk in FIELD_KEYS
+        }
+        # Use field_votes only when at least one judge emitted field data
+        has_fields = any(
+            v is not None
+            for fv in field_votes.values()
+            for v in fv.values()
+        )
+
         consensus_records.append(
-            compute_consensus(img, gt_state, pred_text, verbosity_flagged, scores, rationales, hallus)
+            compute_consensus(
+                img, gt_state, pred_text, verbosity_flagged,
+                scores, rationales, hallus,
+                field_votes=field_votes if has_fields else None,
+            )
         )
 
     consensus_path = judge_dir / f"{run_name}_consensus.jsonl"

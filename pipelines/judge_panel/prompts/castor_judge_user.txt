@@ -11,5 +11,9 @@ Evaluate the VLM output against the ground truth. Output valid JSON only:
 {{
   "visual_alignment_rationale": "<detailed analysis>",
   "hallucinations_detected": ["<item>", ...],
+  "state_correct": <true|false>,
+  "vessel_type_correct": <true|false>,
+  "size_correct": <true|false>,
+  "cargo_correct": <true|false>,
   "final_score": <1|2|3>
 }}
