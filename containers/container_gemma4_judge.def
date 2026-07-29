@@ -1,0 +1,43 @@
+Bootstrap: docker
+From: vllm/vllm-openai:v0.24.0
+
+# Base image provides: Python 3.12, CUDA 12.6, vLLM 0.24.0, torch 2.7.x.
+# vLLM 0.19.0+ has native Gemma-4 support (compressed-tensors w4a16-ct).
+# This SIF is used only for the gemma4_31b judge in P8 — all other P8 judges
+# and all P5/P6/P7 judges continue to use castor_judge.sif (vLLM 0.8.5).
+#
+# Model weights are NOT embedded. They are bind-mounted at runtime from
+# /data/$USER/gemma4-31b-it-w4a16/ by coherence_judge_job.sh.
+
+%post
+    pip install --no-cache-dir \
+        "scipy" \
+        "pandas>=1.5,<3" \
+        "scikit-learn>=1.2,<2"
+
+    python3 -c "
+import vllm, torch, pandas, sklearn
+print('Container build check:')
+print(f'  vllm   : {vllm.__version__}')
+print(f'  torch  : {torch.__version__}')
+print(f'  CUDA   : {torch.version.cuda}')
+print(f'  pandas : {pandas.__version__}')
+print(f'  sklearn: {sklearn.__version__}')
+assert torch.version.cuda, 'CUDA not compiled into torch'
+print('OK')
+"
+
+%environment
+    export PYTHONUNBUFFERED=1
+    export TOKENIZERS_PARALLELISM=false
+    export OMP_NUM_THREADS=1
+    export MKL_NUM_THREADS=1
+    export HF_HUB_DISABLE_PROGRESS_BARS=1
+    export NCCL_DEBUG=WARN
+
+%labels
+    Project   CASTOR_P8_GEMMA4_JUDGE
+    Base      vllm/vllm-openai:v0.24.0
+    vLLM      0.24.0
+    Model     google/gemma-4-31B-it-qat-w4a16-ct
+    Use       apptainer exec --containall --nv --bind /data/$USER:/data/$USER
