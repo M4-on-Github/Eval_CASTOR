@@ -347,6 +347,13 @@ def panel_score_summary(consensus_path, run_name: str) -> dict:
         per_class_score[state] = round(sum(r["mean_score"] for r in subset) / len(subset), 3) if subset else None
         per_class_acc[state]   = round(sum(1 for r in subset if r.get("judge_verdict") == "accurate") / len(subset), 3) if subset else None
 
+    # Per-field accuracy from field_consensus (present only when judges emitted binary fields)
+    FIELD_KEYS = ["state_correct", "vessel_type_correct", "size_correct", "cargo_correct"]
+    field_acc = {}
+    for fk in FIELD_KEYS:
+        vals = [r["field_consensus"][fk] for r in records if r.get("field_consensus", {}).get(fk) is not None]
+        field_acc[fk] = round(sum(1 for v in vals if v) / len(vals), 3) if vals else None
+
     return {
         "run":              run_name,
         "n_records":        len(records),
@@ -364,6 +371,10 @@ def panel_score_summary(consensus_path, run_name: str) -> dict:
         "mean_score_capsized": per_class_score.get("capsized"),
         "mean_score_on_fire":  per_class_score.get("on_fire"),
         "mean_score_sunken":   per_class_score.get("sunken"),
+        "state_acc":        field_acc.get("state_correct"),
+        "vessel_type_acc":  field_acc.get("vessel_type_correct"),
+        "size_acc":         field_acc.get("size_correct"),
+        "cargo_acc":        field_acc.get("cargo_correct"),
     }
 
 

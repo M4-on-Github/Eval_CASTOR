@@ -1,2 +1,26 @@
+# Staging folders (drop JSOLs here before submitting cluster jobs)
 results/
+p5_to_judge/
 p6_plans_to_judge/
+p7_to_check/
+p8_to_check/
+
+# Python
+**/__pycache__/
+*.py[cod]
+*.pyo
+
+# Model weights and containers
+*.bin
+*.safetensors
+*.pt
+*.sif
+*.sif.def.sha256
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*~
