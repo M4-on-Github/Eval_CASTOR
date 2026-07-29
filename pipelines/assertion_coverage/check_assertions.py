@@ -298,12 +298,26 @@ def run(input_path: Path, gt_path: Path, out_dir: Path,
         )
         weighted_score = round(weights_covered / weights_total, 3) if weights_total else None
 
+        # Precision / recall / F1
+        # recall    = coverage_pct (n_covered / n_relevant)
+        # precision = n_covered / (n_covered + contam_count)
+        # F1        = harmonic mean of precision and recall
+        denom_prec = n_covered + contam_count
+        precision  = round(n_covered / denom_prec, 3) if denom_prec else None
+        recall     = coverage_pct  # alias for clarity
+        if precision is not None and recall is not None and (precision + recall) > 0:
+            f1 = round(2 * precision * recall / (precision + recall), 3)
+        else:
+            f1 = None
+
         row: dict = {
             "image":          image,
             "gt_state":       gt_state,
             "coverage_pct":   coverage_pct,
             "high_disc_pct":  high_pct,
             "weighted_score": weighted_score,
+            "precision":      precision,
+            "f1":             f1,
             "n_covered":      n_covered,
             "n_relevant":     n_relevant,
             "contam_count":   contam_count,
@@ -325,7 +339,7 @@ def run(input_path: Path, gt_path: Path, out_dir: Path,
     all_rows = existing_rows + new_rows
     fieldnames = (
         ["image", "gt_state", "coverage_pct", "high_disc_pct", "weighted_score",
-         "n_covered", "n_relevant", "contam_count", "contam_list"]
+         "precision", "f1", "n_covered", "n_relevant", "contam_count", "contam_list"]
         + all_ids
     )
     with open(per_image_path, "w", newline="", encoding="utf-8") as f:
@@ -366,17 +380,21 @@ def run(input_path: Path, gt_path: Path, out_dir: Path,
                 if r.get("gt_state") == state and r.get(field) not in ("", None, "error")]
         return round(sum(vals) / len(vals), 3) if vals else None
 
-    valid_cov = [float(r["coverage_pct"]) for r in all_rows if r.get("coverage_pct") not in ("", None)]
-    valid_hd  = [float(r["high_disc_pct"]) for r in all_rows if r.get("high_disc_pct") not in ("", None)]
-    valid_ws  = [float(r["weighted_score"]) for r in all_rows if r.get("weighted_score") not in ("", None)]
+    valid_cov  = [float(r["coverage_pct"]) for r in all_rows if r.get("coverage_pct") not in ("", None)]
+    valid_hd   = [float(r["high_disc_pct"]) for r in all_rows if r.get("high_disc_pct") not in ("", None)]
+    valid_ws   = [float(r["weighted_score"]) for r in all_rows if r.get("weighted_score") not in ("", None)]
+    valid_prec = [float(r["precision"]) for r in all_rows if r.get("precision") not in ("", None)]
+    valid_f1   = [float(r["f1"]) for r in all_rows if r.get("f1") not in ("", None)]
     contam_counts = [int(r["contam_count"]) for r in all_rows if r.get("contam_count") != ""]
 
     summary = {
         "run":                    run_name,
         "n_images":               len(all_rows),
-        "overall_coverage_pct":   round(sum(valid_cov) / len(valid_cov), 3) if valid_cov else None,
-        "high_disc_coverage_pct": round(sum(valid_hd)  / len(valid_hd),  3) if valid_hd  else None,
-        "weighted_score":         round(sum(valid_ws)  / len(valid_ws),  3) if valid_ws  else None,
+        "overall_coverage_pct":   round(sum(valid_cov)  / len(valid_cov),  3) if valid_cov  else None,
+        "high_disc_coverage_pct": round(sum(valid_hd)   / len(valid_hd),   3) if valid_hd   else None,
+        "weighted_score":         round(sum(valid_ws)   / len(valid_ws),   3) if valid_ws   else None,
+        "mean_precision":         round(sum(valid_prec) / len(valid_prec), 3) if valid_prec else None,
+        "mean_f1":                round(sum(valid_f1)   / len(valid_f1),   3) if valid_f1   else None,
         "mean_contam_count":      round(sum(contam_counts) / len(contam_counts), 3) if contam_counts else None,
         "coverage_aground":       _state_mean(all_rows, "coverage_pct", "aground"),
         "coverage_capsized":      _state_mean(all_rows, "coverage_pct", "capsized"),
@@ -406,6 +424,8 @@ def run(input_path: Path, gt_path: Path, out_dir: Path,
     print(f"\n  overall_coverage={summary['overall_coverage_pct']}  "
           f"high_disc={summary['high_disc_coverage_pct']}  "
           f"weighted={summary['weighted_score']}  "
+          f"precision={summary['mean_precision']}  "
+          f"f1={summary['mean_f1']}  "
           f"mean_contam={summary['mean_contam_count']}")
 
 
