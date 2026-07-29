@@ -1,0 +1,49 @@
+# STANDARD assertions v2
+# 8 per casualty type + 1 resources line + 1 crew line
+# Each assertion passes at least one STANDARD rubric criterion (see rubric.md)
+
+[AGROUND]
+A vessel that can refloat on the next tide without assistance should be monitored with a dedicated tide gauge to track ground reaction as the tide rises, before committing to active pulling.
+Larger vessels (>50 m) require lightering to reduce displacement before any refloat attempt; attempting to refloat an unlightered large vessel risks structural damage.
+Deeper-draft vessels (>10 m draft) require tug assistance to refloat; relying on tide alone is insufficient for deep-draft vessels.
+Hard grounding on rock or coral requires dredging to clear a channel before any pulling attempt; going directly to pulling on hard substrate will fail.
+All fuel tanks must be checked for residual fuel before any cutting, welding, or movement begins.
+All cargo holds must be checked for hazardous materials before any cutting, welding, or movement begins.
+The required pulling force depends on the ground reaction and a seabed-specific friction coefficient (mud < sand < coral < rock); this must be calculated before pulling begins.
+Weight removal must avoid the neutral loading point on the hull — shifting weight at the neutral point produces no reduction in ground reaction; only weight removed from other areas reduces the ground reaction.
+
+[CAPSIZED]
+Crew rescue and personnel recovery must be completed before any righting attempt begins; righting before rescue risks trapping survivors.
+A formal stability check citing minimum righting-arm (GZ curve) and metacentric height (GM) criteria is required before any righting attempt; visual inspection of how the vessel looks is not an acceptable substitute.
+Trapped water inside the hull must be pumped out or drained before righting; uncleared trapped water shifts the centre of gravity and can cause re-capsizing during the right.
+Small craft (<10 m): use manual righting or a small crane. Medium and large craft (>10 m): use controlled deballasting or parbuckling. Parbuckling on a small craft is incorrect method.
+A fully inverted hull (upside-down) requires the upside-down refloating method. A side-lying hull requires the side refloating method. These two methods are not interchangeable.
+All lifting loads during righting must be kept within rated limits and controlled continuously; uncontrolled lifting can overturn the vessel further.
+Post-righting, the hull and internal spaces must be reassessed for flooding and structural damage before the vessel is declared seaworthy or under tow.
+A salvage engineer or naval architect must verify the righting and lift plan; informal visual estimates of stability are not operationally acceptable.
+
+[SUNKEN]
+Before any diver enters an enclosed space or any hot work (cutting, welding) begins, three gas tests must be completed in this exact order: explosive gas first, then oxygen, then toxic gas. Skipping any test or changing the order is a sequencing failure.
+Shallow water (<10 m): patch and refloat. Moderate depth (10–30 m): patch, install cofferdam, then controlled pull. Deep water or heavily damaged hull: crane-and-barge sectional removal. Applying the wrong method for the depth is a method failure.
+Fuel must be offloaded from all tanks before any hull disturbance (raising, lifting, cutting, patching, or refloating); disturbing the hull before defuelling risks uncontrolled spill.
+All cargo must be inventoried and accounted for before any hull disturbance; unknown cargo may include hazardous materials that require specialist handling.
+Released oil response must match the oil's behaviour: surface pooling requires a containment boom and skimmer; water-column suspended oil requires dispersant or water-column response; bottom-settled oil requires electro-acoustic sonar to locate, then diver or ROV recovery.
+Side-scan sonar or electro-acoustic sonar is used to locate submerged or bottom-settled oil that is not visible from the surface.
+In sensitive habitat (coral reef, seagrass, protected zone), diver-directed recovery is preferred over dredging; a net environmental benefit analysis (NEBA) must be documented before choosing the recovery method.
+A dive and survey team must assess hull integrity, internal flooding, and cargo status before any recovery decision is made.
+
+[ON_FIRE]
+The affected space must be confirmed clear of all personnel before activating any fixed suppression system (CO₂ or foam); activating suppression before clearance is a sequencing failure.
+Machinery space fire: suppress with CO₂ gas flooding. Cargo deck fire (open): suppress with foam. These two spaces require different agents and the agents are not interchangeable.
+A fixed CO₂ system requires a two-stage release: the pre-discharge alarm must sound first, then gas floods the space. A single-stage release without the pre-discharge alarm is a method failure.
+A fire involving water-soluble or polar-solvent cargo requires alcohol-resistant (AR) foam; applying standard foam to a polar-solvent fire is a method failure.
+Emergency fire pump capacity must be confirmed as adequate before committing a direct firefighting team; deploying a team without confirming pump capacity risks abandoning the attack mid-operation.
+Fireboat monitors are used for external boundary cooling of spaces adjacent to the fire only; directing monitors into the fire space itself is incorrect use.
+A superheated or smoldering space must be cooled and its boundaries cooled before opening, ventilating, or entering; opening before cooling risks backdraft.
+The hull and vessel stability must be reassessed after the fire is confirmed out; fire damage can leave the vessel at risk of sinking or capsizing during or after firefighting.
+
+[RESOURCES]
+Available resources include: harbor tugs (sheltered water towing), ocean-going salvage tugs (open water towing), beach gear / anchor-wire-chain systems (controlled pulling), floating cranes (lifting capsized or sunken vessels), barges (lightering or sectional removal), submersible pumps (dewatering), cofferdams and patching materials (hull repair), containment booms and skimmers (surface oil spill), side-scan or electro-acoustic sonar (submerged oil or hull survey), fireboats with external monitors (boundary cooling only), and alcohol-resistant (AR) foam concentrate (polar-solvent fires).
+
+[CREW]
+Response crew includes: dive and survey team (underwater hull assessment and gas testing), salvage engineer or naval architect (stability check against GM and righting-arm criteria, lift plan verification), firefighting team (suppression and boundary cooling), rescue swimmers or boat crew (crew recovery from capsized vessel), hazmat or ordnance specialist (unknown cargo, older military vessel, or suspected dangerous goods).

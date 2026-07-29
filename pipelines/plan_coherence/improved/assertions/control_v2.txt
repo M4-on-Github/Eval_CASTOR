@@ -1,0 +1,50 @@
+# CONTROL assertions v2
+# 8 per casualty type + 1 resources line + 1 crew line  (matches standard_v2 count exactly)
+# Each assertion fails all four STANDARD rubric criteria (see rubric.md)
+# All are tautological, non-discriminative, generically resourced, or vaguely scalar
+
+[AGROUND]
+Conditions at the scene may need to be assessed before any action is taken.
+A larger vessel may be harder to free and may require more time and resources than a smaller one.
+The type of ground the vessel is resting on may affect how difficult it is to move.
+Weather and sea state may need to be taken into account before any attempt to move the vessel.
+The cargo load of the vessel may be relevant to how the operation is planned.
+The position of the vessel may need to be kept under observation throughout the operation.
+Equipment used to move the vessel may need to be suitable for its size and weight.
+Local conditions such as currents and visibility may affect how the operation is carried out.
+
+[CAPSIZED]
+People aboard the vessel may need to be accounted for before other actions are considered.
+Rescuers approaching the vessel may need to take care to avoid making the situation worse.
+The stability of the vessel may be a factor that needs to be considered at some point.
+Water that has entered the hull may create additional challenges that need to be addressed.
+Smaller vessels may generally be easier to deal with than larger ones in similar situations.
+Care may be needed throughout the operation to avoid causing further damage to the vessel.
+The condition of the vessel may affect what options are available to responders.
+Local resources that are available may need to be identified and coordinated before work begins.
+
+[SUNKEN]
+The area around the sunken vessel may need to be checked for potential hazards before work begins.
+The depth at which the vessel is located may affect what approaches can be used to recover it.
+The vessel may need to be inspected in some way before any recovery attempt is made.
+Fuel or cargo aboard the vessel may need to be considered before the hull is interfered with.
+Any material that has been released from the vessel may need to be managed in an appropriate way.
+The condition of the wreck may affect how carefully it needs to be handled during any recovery work.
+Weather and sea conditions may limit how much time responders can spend working at the site each day.
+The age or history of the vessel may be relevant to decisions about how to approach the recovery.
+
+[ON_FIRE]
+People aboard the vessel may need to be moved to a safe location before firefighting activities begin.
+The nature of the fire may be a factor in determining what approach to firefighting is most suitable.
+Fuel and other flammable materials near the fire may need to be taken into account during the response.
+Limiting the supply of air to the fire may be something to consider where this is practical.
+Equipment intended for use in the response may need to be checked to confirm it is in working order.
+Support vessels in the area may be able to assist the firefighting effort from outside the vessel.
+The fire may need to be confirmed as fully under control before anyone re-boards the vessel.
+The vessel may need to be looked over once the fire is out to check for any resulting damage.
+
+[RESOURCES]
+Available resources may include tugboats for towing, cranes for lifting, barges for heavy loads, pumps for removing water, patching materials for hull damage, booms for containing spills, fireboats for firefighting support, and foam or extinguishing agents as needed.
+
+[CREW]
+Response crew may include divers to inspect the vessel, engineers to assist with planning, firefighters for any fire-related aspects, and rescue personnel to assist anyone who may be aboard.

@@ -1,0 +1,85 @@
+# =============================================================================
+# CASTOR Improved Pipeline — config.yaml
+# Edit the paths section before running run_all.sh
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# PATHS  (all cluster-side absolute paths)
+# All ${USER} / ${HOME} refs are expanded at runtime via os.path.expandvars().
+# -----------------------------------------------------------------------------
+paths:
+  # Root directory containing aground/ capsized/ sunken/ on_fire/ image subdirs
+  # Images live in the ONLY repo (shared across methods).
+  images_dir: /home/${USER}/ONLY/CASTOR/shipwreck_wiki_images/sorted_images
+
+  # Base directory where model weights live (all per-user on pleiades)
+  # VLM:   /data/$USER/qwen3vl-8b          (downloaded by QWEN/CASTOR/build_container.sh)
+  # Judge: /data/$USER/llama-3.3-70b-instruct-w4a16  (downloaded by Eval_CASTOR/containers/download_job.sh)
+  user_models_dir: /data/${USER}
+
+  # Where this repo lives on the cluster (parent of improved/)
+  pipeline_dir: /home/${USER}/Eval_CASTOR/pipelines/plan_coherence/improved
+
+  # Ground truth CSV
+  gt_csv: /home/${USER}/Eval_CASTOR/human_ground_truth_label/human_gt.csv
+
+  # Inference container: QWEN repo SIF — torch 2.3.1 + transformers>=4.51 + qwen-vl-utils
+  # Built by QWEN/CASTOR/build_container.sh (sbatch QWEN/CASTOR/submit.sh runs it automatically)
+  container_inference: /data/${USER}/castor_qwen.sif
+
+  # Judge + aggregate container: castor_judge.sif — vLLM 0.8.5 + pandas/scipy
+  # Built by Eval_CASTOR/containers/build_judge_container.sh
+  container_judge: /data/${USER}/castor_judge.sif
+
+# -----------------------------------------------------------------------------
+# MODELS
+# -----------------------------------------------------------------------------
+models:
+  # VLM used for plan generation (inference stage)
+  # Weights: paths.vlm_models_dir / vlm_dir  →  /data/$USER/qwen3vl-8b
+  vlm_dir: qwen3vl-8b
+  vlm_tag: qwen3vl8b
+
+  # Judge model for MTH+SPC evaluation (eval stage)
+  # Weights: paths.models_dir / judge_dir  →  /data/shared/models/llama-3.3-70b-instruct-w4a16
+  # Using Llama-3.3-70B (already on cluster from P8); fits on 1x RTX6000Ada (~35 GB).
+  judge_dir: llama-3.3-70b-instruct-w4a16
+
+  # Coverage model for assertion coverage check (stage 1.5)
+  # Selene 8B AWQ — tiny, fast, fits on 1 GPU, prefix-cache reuse across same-image calls
+  selene_dir: selene-1-mini-llama-3.1-8b-awq
+
+# -----------------------------------------------------------------------------
+# INFERENCE
+# -----------------------------------------------------------------------------
+inference:
+  # Prompt condition names — must match filenames in prompts/
+  conditions:
+    - standard_v2
+    - control_v2
+    - ablation_v2
+
+  method_tag: baseline            # recorded in output JSONL as "method"
+  max_new_tokens: 1024
+  temperature: 0.0                # greedy decoding for reproducibility
+  # Output JSONL naming:  answers_qwen3vl8b_baseline_{condition}_improved.jsonl
+
+# -----------------------------------------------------------------------------
+# JUDGE (eval stage)
+# -----------------------------------------------------------------------------
+judge:
+  max_tokens: 256
+  max_model_len: 8192
+  gpu_memory_utilization: 0.90
+  temperature: 0.0
+
+# -----------------------------------------------------------------------------
+# SLURM  (used by run_all.sh)
+# -----------------------------------------------------------------------------
+slurm:
+  partition: pleiades
+  nodelist: pleiades-0-17,pleiades-0-23
+  time: "12:00:00"
+  cpus_per_task: 16
+  gpus: 2
+  mem: 150G
