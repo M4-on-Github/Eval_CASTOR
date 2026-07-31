@@ -204,7 +204,7 @@ _MODEL_CONFIG = {
     # reasoning outside <think> tags and exhausted max_tokens before reaching JSON.
     "deepseek_r1_32b": {
         "tp": 1, "dir": "deepseek-r1-distill-qwen-32b-awq",
-        "quantization": None, "max_model_len": 8192, "max_tokens": 1024,
+        "quantization": None, "max_model_len": 8192, "max_tokens": 2048,
         "guided_json": _JUDGE_JSON_SCHEMA,
     },
     # GLM-4-32B-0414 GPTQ W4A16: ~22 GB weights, 1 GPU. GPTQ backend supports
@@ -218,7 +218,7 @@ _MODEL_CONFIG = {
     # Purpose-built judge (LlamaForCausalLM backbone, #1 RewardBench at 8B class).
     "selene_mini_8b": {
         "tp": 1, "dir": "selene-1-mini-llama-3.1-8b-awq",
-        "quantization": None, "max_model_len": 4096, "max_tokens": 512,
+        "quantization": None, "max_model_len": 4096, "max_tokens": 1024,
         "guided_json": _JUDGE_JSON_SCHEMA,
     },
 }
