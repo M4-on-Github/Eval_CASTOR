@@ -135,12 +135,24 @@ def parse_judge_response(raw: str) -> dict:
     }
 
 
+def make_record_id(image: str, model_tag: str = "", method: str = "",
+                   prompt_stem: str = "") -> str:
+    """Stable composite key for a single inference record."""
+    return f"{image}||{model_tag}||{method}||{prompt_stem}"
+
+
 def build_output_record(image: str, gt_state: str, pred_text: str,
                         verbosity_flagged: bool, judge_model: str,
-                        parse_result: dict, elapsed_s: float) -> dict:
+                        parse_result: dict, elapsed_s: float,
+                        model_tag: str = "", method: str = "",
+                        prompt_stem: str = "") -> dict:
     """Assemble the final per-sample output record."""
     rec = {
+        "record_id":           make_record_id(image, model_tag, method, prompt_stem),
         "image":               image,
+        "model_tag":           model_tag,
+        "method":              method,
+        "prompt_stem":         prompt_stem,
         "gt_state":            gt_state,
         "pred_text":           pred_text,
         "verbosity_flagged":   verbosity_flagged,
@@ -281,9 +293,9 @@ def run(input_path: Path, gt_path: Path, out_dir: Path, model: str,
     run_name = input_path.stem
     out_path = out_dir / f"{run_name}_{model}.jsonl"
 
-    # Resume: collect already-scored images; rewrite file keeping only successes
-    # so that re-running after parse failures doesn't create duplicate entries.
-    done = {}  # image -> json line (string)
+    # Resume: collect already-scored records; key on record_id (composite) so
+    # multiple combos per image are all tracked independently.
+    done = {}  # record_id -> json line (string)
     if out_path.exists():
         with open(out_path, encoding="utf-8") as f:
             for line in f:
@@ -292,17 +304,15 @@ def run(input_path: Path, gt_path: Path, out_dir: Path, model: str,
                     try:
                         r = json.loads(line)
                         if r.get("parse_ok"):
-                            done[r["image"]] = line
+                            rid = r.get("record_id") or r.get("image", "")
+                            done[rid] = line
                     except json.JSONDecodeError:
                         pass
         if done:
-            # Rewrite file with only successful records so failed ones don't
-            # accumulate on subsequent runs.
             with open(out_path, "w", encoding="utf-8") as f:
                 for l in done.values():
                     f.write(l + "\n")
         else:
-            # No successes at all — start fresh.
             out_path.unlink()
         print(f"  Resume: {len(done)} already scored.")
 
@@ -311,27 +321,36 @@ def run(input_path: Path, gt_path: Path, out_dir: Path, model: str,
     if limit:
         records = records[:limit]
 
-    pending = [r for r in records if r.get("image", "") not in done]
+    pending = [r for r in records
+               if make_record_id(r.get("image", ""), r.get("model_tag", ""),
+                                 r.get("method", ""), r.get("prompt_stem", ""))
+               not in done]
     if not pending:
         print(f"  All {len(done)} records already scored — nothing to do.")
         return out_path
-
 
     print(f"  Scoring {len(pending)} records with {model} ...")
 
     # Preprocess all records and build prompts
     images, gt_states, pred_texts, vflags, user_prompts = [], [], [], [], []
+    model_tags, methods, prompt_stems = [], [], []
     for rec in pending:
-        image     = rec.get("image", "")
-        pred_text = rec.get("text", "")
-        gt_fields = gt.get(image, {})
-        pp        = preprocess(pred_text, gt_fields)
-        up        = build_user_prompt(gt_fields, pp.clean_pred)
+        image      = rec.get("image", "")
+        pred_text  = rec.get("text", "")
+        model_tag  = rec.get("model_tag", "")
+        method     = rec.get("method", "")
+        prompt_stem = rec.get("prompt_stem", "")
+        gt_fields  = gt.get(image, {})
+        pp         = preprocess(pred_text, gt_fields)
+        up         = build_user_prompt(gt_fields, pp.clean_pred)
         images.append(image)
         gt_states.append(gt_fields.get("state", ""))
         pred_texts.append(pred_text)
         vflags.append(pp.verbosity_flagged)
         user_prompts.append(up)
+        model_tags.append(model_tag)
+        methods.append(method)
+        prompt_stems.append(prompt_stem)
 
     # Single vLLM batch pass
     cfg = _MODEL_CONFIG.get(model, {})
@@ -354,12 +373,14 @@ def run(input_path: Path, gt_path: Path, out_dir: Path, model: str,
     # Parse and append results
     errors = 0
     with open(out_path, "a", encoding="utf-8") as out_f:
-        for i, (image, gt_state, pred_text, vflag, raw) in enumerate(
-            zip(images, gt_states, pred_texts, vflags, raw_responses)
+        for i, (image, gt_state, pred_text, vflag, raw, mt, meth, ps) in enumerate(
+            zip(images, gt_states, pred_texts, vflags, raw_responses,
+                model_tags, methods, prompt_stems)
         ):
             parse_result = parse_judge_response(raw if isinstance(raw, str) else "")
             output_rec   = build_output_record(
                 image, gt_state, pred_text, vflag, model, parse_result, per_s,
+                model_tag=mt, method=meth, prompt_stem=ps,
             )
             out_f.write(json.dumps(output_rec) + "\n")
             if not parse_result["parse_ok"]:

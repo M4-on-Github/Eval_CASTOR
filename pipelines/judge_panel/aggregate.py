@@ -27,8 +27,18 @@ FIELD_KEYS = ["state_correct", "vessel_type_correct", "size_correct", "cargo_cor
 # Public helpers (tested directly)
 # ---------------------------------------------------------------------------
 
+def _record_id(rec: dict) -> str:
+    """Stable composite key: image||model_tag||method||prompt_stem.
+    Falls back to image alone for old records that lack the extra fields."""
+    img  = rec.get("image", "")
+    mt   = rec.get("model_tag", "")
+    meth = rec.get("method", "")
+    ps   = rec.get("prompt_stem", "")
+    return f"{img}||{mt}||{meth}||{ps}"
+
+
 def load_judge_jsonl(path: Path) -> dict:
-    """Load a per-model judge JSONL. Returns {image -> record}."""
+    """Load a per-model judge JSONL. Returns {record_id -> record}."""
     result = {}
     with open(path, encoding="utf-8") as f:
         for line in f:
@@ -38,7 +48,7 @@ def load_judge_jsonl(path: Path) -> dict:
             try:
                 rec = json.loads(line)
                 if "image" in rec:
-                    result[rec["image"]] = rec
+                    result[_record_id(rec)] = rec
             except json.JSONDecodeError:
                 pass
     return result
@@ -48,7 +58,9 @@ def compute_consensus(image: str, gt_state: str, pred_text: str,
                       verbosity_flagged: bool,
                       scores: dict, rationales: dict,
                       hallucinations: dict,
-                      field_votes: Optional[dict] = None) -> dict:
+                      field_votes: Optional[dict] = None,
+                      model_tag: str = "", method: str = "",
+                      prompt_stem: str = "") -> dict:
     """Compute panel consensus from per-model scores.
 
     Args:
@@ -89,7 +101,11 @@ def compute_consensus(image: str, gt_state: str, pred_text: str,
                 field_consensus[fk] = None
 
     rec = {
+        "record_id":           f"{image}||{model_tag}||{method}||{prompt_stem}",
         "image":               image,
+        "model_tag":           model_tag,
+        "method":              method,
+        "prompt_stem":         prompt_stem,
         "gt_state":            gt_state,
         "pred_text":           pred_text,
         "verbosity_flagged":   verbosity_flagged,
@@ -123,31 +139,34 @@ def aggregate_run(run_name: str, judge_dir: Path) -> tuple:
             print(f"  WARNING: missing judge file {p.name}")
             judge_data[model] = {}
 
-    # Union of all images seen across all judges
-    all_images = sorted({
-        img for model_data in judge_data.values() for img in model_data
+    # Union of all record_ids seen across all judges
+    all_record_ids = sorted({
+        rid for model_data in judge_data.values() for rid in model_data
     })
 
     consensus_records = []
-    for img in all_images:
+    for rid in all_record_ids:
         # Use first available record for shared fields
         ref = next(
-            (judge_data[m][img] for m in JUDGE_MODELS if img in judge_data[m]),
+            (judge_data[m][rid] for m in JUDGE_MODELS if rid in judge_data[m]),
             {}
         )
-        gt_state         = ref.get("gt_state", "")
-        pred_text        = ref.get("pred_text", "")
+        image             = ref.get("image", rid.split("||")[0])
+        model_tag         = ref.get("model_tag", "")
+        method            = ref.get("method", "")
+        prompt_stem       = ref.get("prompt_stem", "")
+        gt_state          = ref.get("gt_state", "")
+        pred_text         = ref.get("pred_text", "")
         verbosity_flagged = ref.get("verbosity_flagged", False)
 
-        scores = {m: judge_data[m].get(img, {}).get("score") for m in JUDGE_MODELS}
-        rationales = {m: judge_data[m].get(img, {}).get("rationale", "") for m in JUDGE_MODELS}
-        hallus = {m: judge_data[m].get(img, {}).get("hallucinations", []) for m in JUDGE_MODELS}
+        scores     = {m: judge_data[m].get(rid, {}).get("score")       for m in JUDGE_MODELS}
+        rationales = {m: judge_data[m].get(rid, {}).get("rationale", "") for m in JUDGE_MODELS}
+        hallus     = {m: judge_data[m].get(rid, {}).get("hallucinations", []) for m in JUDGE_MODELS}
 
         field_votes = {
-            fk: {m: judge_data[m].get(img, {}).get(fk) for m in JUDGE_MODELS}
+            fk: {m: judge_data[m].get(rid, {}).get(fk) for m in JUDGE_MODELS}
             for fk in FIELD_KEYS
         }
-        # Use field_votes only when at least one judge emitted field data
         has_fields = any(
             v is not None
             for fv in field_votes.values()
@@ -156,9 +175,10 @@ def aggregate_run(run_name: str, judge_dir: Path) -> tuple:
 
         consensus_records.append(
             compute_consensus(
-                img, gt_state, pred_text, verbosity_flagged,
+                image, gt_state, pred_text, verbosity_flagged,
                 scores, rationales, hallus,
                 field_votes=field_votes if has_fields else None,
+                model_tag=model_tag, method=method, prompt_stem=prompt_stem,
             )
         )
 
