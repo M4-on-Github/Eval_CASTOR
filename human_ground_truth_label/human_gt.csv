@@ -1,34 +1,111 @@
-image,state,vessel_type,size_estimate,cargo,q1,q2,q3,q4,q5
-synthetic/aground_seq_fail_01.jpg,aground,merchant/commercial,medium (10-50m),unknown,,,,,
-synthetic/aground_seq_fail_02.jpg,aground,merchant/commercial,medium (10-50m),unknown,,,,,
-synthetic/aground_mth_fail_01.jpg,aground,merchant/commercial,medium (10-50m),unknown,,,,,
-synthetic/aground_mth_fail_02.jpg,aground,merchant/commercial,large (>50m),present,,,,,
-synthetic/aground_mth_fail_03.jpg,aground,merchant/commercial,medium (10-50m),unknown,,,,,
-synthetic/aground_mth_fail_04.jpg,aground,merchant/commercial,medium (10-50m),unknown,,,,,
-synthetic/aground_spc_fail_01.jpg,aground,merchant/commercial,medium (10-50m),unknown,,,,,
-synthetic/aground_correct_01.jpg,aground,merchant/commercial,medium (10-50m),unknown,,,,,
-synthetic/capsized_seq_fail_01.jpg,capsized,passenger,large (>50m),absent,,,,,
-synthetic/capsized_seq_fail_02.jpg,capsized,merchant/commercial,medium (10-50m),unknown,,,,,
-synthetic/capsized_mth_fail_01.jpg,capsized,fishing,small (<10m),absent,,,,,
-synthetic/capsized_mth_fail_02.jpg,capsized,merchant/commercial,medium (10-50m),unknown,,,,,
-synthetic/capsized_mth_fail_03.jpg,capsized,fishing,small (<10m),absent,,,,,
-synthetic/capsized_spc_fail_01.jpg,capsized,merchant/commercial,medium (10-50m),unknown,,,,,
-synthetic/capsized_correct_01.jpg,capsized,merchant/commercial,medium (10-50m),unknown,,,,,
-synthetic/sunken_seq_fail_01.jpg,sunken,merchant/commercial,medium (10-50m),present,,,,,
-synthetic/sunken_seq_fail_02.jpg,sunken,merchant/commercial,medium (10-50m),present,,,,,
-synthetic/sunken_mth_fail_01.jpg,sunken,merchant/commercial,medium (10-50m),present,,,,,
-synthetic/sunken_mth_fail_02.jpg,sunken,merchant/commercial,medium (10-50m),present,,,,,
-synthetic/sunken_mth_fail_03.jpg,sunken,merchant/commercial,medium (10-50m),present,,,,,
-synthetic/sunken_mth_fail_04.jpg,sunken,merchant/commercial,medium (10-50m),present,,,,,
-synthetic/sunken_mth_fail_05.jpg,sunken,merchant/commercial,medium (10-50m),present,,,,,
-synthetic/sunken_mth_fail_06.jpg,sunken,military/naval,medium (10-50m),unknown,,,,,
-synthetic/sunken_spc_fail_01.jpg,sunken,merchant/commercial,medium (10-50m),present,,,,,
-synthetic/sunken_correct_01.jpg,sunken,merchant/commercial,medium (10-50m),present,,,,,
-synthetic/fire_seq_fail_01.jpg,on_fire,merchant/commercial,medium (10-50m),absent,,,,,
-synthetic/fire_seq_fail_02.jpg,on_fire,merchant/commercial,medium (10-50m),present,,,,,
-synthetic/fire_mth_fail_01.jpg,on_fire,merchant/commercial,medium (10-50m),absent,,,,,
-synthetic/fire_mth_fail_02.jpg,on_fire,merchant/commercial,medium (10-50m),present,,,,,
-synthetic/fire_mth_fail_03.jpg,on_fire,merchant/commercial,medium (10-50m),absent,,,,,
-synthetic/fire_mth_fail_04.jpg,on_fire,merchant/commercial,medium (10-50m),present,,,,,
-synthetic/fire_spc_fail_01.jpg,on_fire,merchant/commercial,medium (10-50m),absent,,,,,
-synthetic/fire_correct_01.jpg,on_fire,merchant/commercial,medium (10-50m),present,,,,,
+image,state,vessel_type,,cargo,error,q1,q2,q3,q4,q5,size_estimate
+aground/00017.jpg,aground,Military transport ship,,,,yes,no,no,no,no,large (>50m)
+aground/00018.jpg,aground,Steam Cargo Vessel,,,,yes,no,no,no,no,medium (10–50m)
+aground/00028.jpg,aground,Sail Ship,,,,yes,no,no,no,no,large (>50m)
+aground/00034.jpg,aground,Cargo Ship,,,,yes,no,no,no,no,medium (10–50m)
+aground/00035.jpg,aground,Cargo Ship,,,,yes,no,no,no,no,medium (10–50m)
+aground/00039.JPG,aground,Freighter,,,,yes,no,no,no,no,medium (10–50m)
+aground/00041.jpg,aground,Cargo Ship,,,,yes,no,no,no,no,medium (10–50m)
+aground/00045.jpg,aground,Fishing Boat,,,,yes,no,no,no,no,medium (10–50m)
+aground/00051.jpg,aground,Passenger Ferry,,,,yes,no,no,no,no,large (>50m)
+aground/00054.jpg,aground,Cargo Ship,,,,yes,no,no,no,no,large (>50m)
+aground/00056.jpg,aground,Military Vessel,,,,yes,no,no,no,no,large (>50m)
+aground/00063.jpg,aground,Cargo Ship,,,,yes,no,no,no,no,medium (10–50m)
+aground/00074.jpg,aground,Naval Ship,,,,yes,no,no,no,no,large (>50m)
+aground/00079.jpg,aground,Cargo Ship,,,,yes,no,no,no,no,large (>50m)
+aground/00082.jpg,aground,Cargo Ship,,,,yes,no,no,no,no,large (>50m)
+aground/00086.jpg,aground,Cargo Ship,,,,yes,no,no,no,no,large (>50m)
+aground/00090.jpg,aground,Cargo Ship,,,,yes,no,no,no,no,medium (10–50m)
+aground/00097.jpg,aground,Steam Boat,,,,yes,no,no,no,no,medium (10–50m)
+aground/00098.jpg,aground,Cargo Ship,,,,yes,no,no,no,no,medium (10–50m)
+aground/00100.jpg,aground,Cargo Ship,,,,yes,no,no,no,no,medium (10–50m)
+aground/00101.jpg,aground,Military Ship,,,,yes,no,no,no,no,medium (10–50m)
+aground/00103.jpg,aground,Cargo Ship,,,,yes,no,no,no,no,medium (10–50m)
+aground/00109.jpg,aground,Cargo Ship,,,,yes,no,no,no,no,medium (10–50m)
+aground/00112.jpg,aground,Cargo Ship,,,,yes,no,no,no,no,medium (10–50m)
+aground/00128.jpg,aground,Tugboat,,,,yes,no,no,no,no,small (<10m)
+aground/00129.jpg,aground,Fishing Boat,,,,yes,no,no,no,no,medium (10–50m)
+aground/00130.jpg,aground,Cargo Ship,,,,yes,no,no,no,no,large (>50m)
+aground/00137.jpg,aground,Cruise Ship,,,,yes,no,no,no,no,large (>50m)
+aground/00147.jpg,aground,Cargo Ship,,,,yes,no,no,no,no,large (>50m)
+aground/00148.jpg,aground,Cargo Ship,,,,yes,no,no,no,no,medium (10–50m)
+aground/00157.jpg,aground,Sail Ship,,,,yes,no,no,no,no,large (>50m)
+aground/00165.PNG,aground,Fishing Boat,,,,yes,no,no,no,no,small (<10m)
+aground/00166.jpg,aground,Cargo ship,,,,yes,no,no,no,no,large (>50m)
+aground/00170.jpg,aground,Cargo Ship,,,,yes,no,no,no,no,medium (10–50m)
+aground/00174.jpg,aground,Passenger ship,,,,yes,no,no,no,no,medium (10–50m)
+aground/00181.PNG,aground,Fishing Boat,,,,yes,no,no,no,no,small (<10m)
+aground/00196.jpg,aground,Cargo Ship,,,,yes,no,no,no,no,large (>50m)
+aground/00201.jpg,aground,Container Ship,,Shipping containers (MAERSK and other brands visible on deck),,yes,no,no,no,no,large (>50m)
+aground/00204.jpg,aground,Fuel Barrage,,,,yes,no,no,no,no,large (>50m)
+aground/00206.jpg,aground,Navy Minesweeper,,,,yes,no,no,no,no,medium (10–50m)
+aground/00207.jpg,aground,Cargo Ship,,,,yes,no,no,no,no,large (>50m)
+aground/00224.jpg,aground,Cargo Ship,,,,yes,no,no,no,no,medium (10–50m)
+capsized/00002.jpg,capsized,warship,,,,no,no,yes,no,no,medium (10–50m)
+capsized/00006.jpg,capsized,Harbor Tug,,,,yes,no,yes,no,no,medium (10-50m)
+capsized/00009.jpg,capsized,Battleship,,,,no,no,yes,no,no,medium (10–50m)
+capsized/00019.JPG,capsized,UNKNOWN,,,,no,no,yes,no,no,medium (10-50m)
+capsized/00076.jpg,capsized,Ocean Liner,,,,no,no,yes,no,no,large (>50m)
+capsized/00084.jpg,capsized,UNKNOWN,,,,no,no,yes,no,no,large (>50m)
+capsized/00089.jpg,capsized,Military Ship,,,,yes,no,yes,no,no,medium (10-50m)
+capsized/00116.jpg,capsized,Cruise Ship,,,,no,no,yes,no,no,large (>50m)
+capsized/00140.jpg,capsized,Cargo Ship,,,,no,yes,no,no,no,large (>50m)
+capsized/00146.jpg,capsized,Naval Ship,,,,no,no,yes,no,no,large (>50m)
+capsized/00161.jpg,capsized,Aircraft Carrier,,,,no,no,yes,no,no,large (>50m)
+capsized/00176.jpg,capsized,Passenger Ship,,,,no,no,yes,no,no,large (>50m)
+capsized/00182.jpg,capsized,Passenger Ship,,,,no,no,yes,no,no,large (>50m)
+capsized/00183.jpg,capsized,UNKNOWN,,,,no,no,yes,no,no,medium (10–50m)
+capsized/00195.jpg,capsized,Cruise Ship,,,,yes,no,no,no,no,large (>50m)
+capsized/00208.jpg,capsized,Cargo Ship,,"Mixed shipping containers on deck — blue (CMA CGM branded), red, yellow/green, approximately 8-10 containers visible, severely displaced by list.",,no,no,yes,no,no,medium (10–50m)
+capsized/00212.JPG,capsized,Cruise Ship,,,,no,no,yes,no,no,large (>50m)
+capsized/00214.JPG,capsized,Cargo Ship,,"Multiple shipping containers on deck — yellow (possibly refrigerated), blue CMA CGM branded, gray — approximately 15-20 containers visible in stacked rows.",,no,no,no,no,yes,large (>50m)
+capsized/00227.jpg,capsized,UNKNOWN,,,,no,no,yes,no,no,large (>50m)
+on_fire/00011.jpg,on_fire,Cargo Ship,,,,yes,no,no,yes,no,medium (10–50m)
+on_fire/00012.jpg,on_fire,UNKNOWN,,,,no,no,no,yes,no,small (<10m)
+on_fire/00070.png,on_fire,Passenger Ship,,,,no,no,no,yes,no,large (>50m)
+on_fire/00077.jpg,on_fire,Passenger Ship,,,,no,no,no,yes,no,large (>50m)
+on_fire/00107.JPEG,on_fire,Patrol Boat,,,,no,no,no,yes,no,medium (10-50m)
+on_fire/00115.jpg,on_fire,UNKNOWN,,,,no,no,no,yes,no,large (>50m)
+on_fire/00135.jpeg,on_fire,Cargo Ship,,,,yes,no,no,yes,no,medium (10–50m)
+on_fire/00142.jpg,on_fire,UNKNOWN,,,,no,no,no,yes,no,large (>50m)
+on_fire/00154.PNG,on_fire,fishing boat,,,,no,no,no,yes,no,small (<10m)
+on_fire/00155.jpg,on_fire,Naval Warship,,,,no,no,no,yes,no,large (>50m)
+on_fire/00169.PNG,on_fire,UNKNOWN,,,,no,no,no,yes,no,medium (10-50m)
+on_fire/00171.jpg,on_fire,UNKNOWN,,,,no,no,no,yes,no,large (>50m)
+on_fire/00185.jpg,on_fire,Cargo Ship,,,,no,no,no,yes,no,large (>50m)
+on_fire/00198.jpg,on_fire,Fishing Boat,,,,no,no,no,yes,no,medium (10-50m)
+on_fire/00210.JPG,on_fire,Ferry,,,,no,no,no,yes,no,medium (10–50m)
+on_fire/00228.jpg,on_fire,Naval Ship,,,,no,no,no,yes,no,large (>50m)
+sunken/00014.jpg,sunken,Steamship,,,,no,yes,no,no,no,medium (10–50m)
+sunken/00015.jpg,sunken,Passenger Ship,,,,no,yes,no,no,no,large (>50m)
+sunken/00021.jpg,sunken,Cargo Ship,,,,no,yes,no,no,no,large (>50m)
+sunken/00022.jpg,sunken,UNKNOWN,,,,no,yes,no,no,no,large (>50m)
+sunken/00023.jpg,sunken,passenger ship,,,,no,yes,no,no,no,medium (10–50m)
+sunken/00027.jpg,sunken,Ocean Liner,,,,no,yes,no,no,no,large (>50m)
+sunken/00032.jpg,sunken,Ferry,,,,no,yes,no,no,no,medium (10–50m)
+sunken/00048.jpg,sunken,UNKNOWN,,,,yes,yes,no,no,no,medium (10–50m)
+sunken/00062.jpg,sunken,Cargo Ship,,,,no,yes,no,no,no,medium (10–50m)
+sunken/00064.jpg,sunken,Fishing Boat,,,,no,yes,no,no,no,medium (10–50m)
+sunken/00073.jpg,sunken,UNKNOWN,,,,no,yes,no,no,no,medium (10–50m)
+sunken/00091.jpg,sunken,Cargo Ship,,,,no,yes,no,no,no,large (>50m)
+sunken/00094.jpg,sunken,Cargo Ship,,,,no,yes,no,no,no,large (>50m)
+sunken/00126.jpg,sunken,Military Ship,,,,yes,yes,no,no,no,medium (10–50m)
+sunken/00127.jpg,sunken,UNKNOWN,,,,no,yes,no,no,no,small (<10m)
+sunken/00131.jpg,sunken,Cargo Ship,,,,no,yes,no,no,no,large (>50m)
+sunken/00132.jpg,sunken,Passenger Ship,,,,no,yes,no,no,no,medium (10–50m)
+sunken/00138.jpg,sunken,Naval Ship,,,,no,yes,no,no,no,large (>50m)
+sunken/00143.jpg,sunken,Naval Ship,,,,no,yes,no,no,no,large (>50m)
+sunken/00156.jpg,sunken,Cargo Ship,,,,no,yes,no,no,no,large (>50m)
+sunken/00162.jpg,sunken,Cargo Ship,,,,no,yes,no,no,no,large (>50m)
+sunken/00167.JPG,sunken,Cargo Ship,,,,no,yes,no,no,no,large (>50m)
+sunken/00173.PNG,sunken,Boat,,,,no,yes,no,no,no,small (<10m)
+sunken/00186.JPG,sunken,Sail Ship,,,,no,yes,no,no,no,small (<10m)
+sunken/00191.JPG,sunken,UNKNOWN,,,,no,yes,no,no,no,large (>50m)
+sunken/00200.jpg,sunken,UNKNOWN,,,,no,yes,no,no,no,medium (10–50m)
+sunken/00203.jpg,sunken,Sail Ship,,,,no,yes,no,no,no,medium (10–50m)
+sunken/00209.JPG,sunken,Sail Ship,,,,yes,yes,no,no,no,medium (10–50m)
+sunken/00220.png,sunken,Fishing Boat,,,,no,yes,no,no,no,small (<10m)
+sunken/00221.PNG,sunken,Cargo Ship,,,,no,yes,no,no,no,medium (10–50m)
+sunken/00223.PNG,sunken,UNKNOWN,,,,no,yes,no,no,no,small (<10m)
+sunken/00231.jpg,sunken,Passenger Ship,,,,no,yes,no,no,no,medium (10–50m)
+sunken/00233.PNG,sunken,Cargo Ship,,,,no,yes,no,no,no,medium (10–50m)
