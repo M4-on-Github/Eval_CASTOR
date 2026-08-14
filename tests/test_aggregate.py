@@ -15,6 +15,7 @@ from pipelines.judge_panel.aggregate import (
     compute_consensus,
     aggregate_run,
     STD_FLAG_THRESHOLD,
+    JUDGE_MODELS,
 )
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -47,8 +48,14 @@ def test_load_returns_dict_keyed_by_image():
                 _make_record("img/b.jpg", "capsized", 2)]
         _write_jsonl(p, recs)
         result = load_judge_jsonl(p)
-        assert "img/a.jpg" in result
-        assert result["img/a.jpg"]["score"] == 3
+        # Records are keyed by the COMPOSITE id, not the bare image path: one
+        # image appears once per (model, method, prompt) combination and each
+        # needs its own verdict. Absent those fields the segments are empty,
+        # so the key is "img/a.jpg||||||" — there is no fallback to the image
+        # alone, despite what _record_id's docstring used to claim.
+        key = "img/a.jpg||||||"
+        assert key in result, sorted(result)
+        assert result[key]["score"] == 3
 
 def test_load_skips_blank_lines():
     with tempfile.TemporaryDirectory() as tmp:
@@ -61,31 +68,31 @@ def test_load_skips_blank_lines():
 # ── compute_consensus ────────────────────────────────────────────────────────
 
 def test_consensus_all_agree():
-    scores = {"gptoss_120b": 3, "deepseek_r1": 3, "qwen25_72b": 3}
+    scores = {JUDGE_MODELS[0]: 3, JUDGE_MODELS[1]: 3, JUDGE_MODELS[2]: 3}
     c = compute_consensus("img/a.jpg", "aground", "text", False, scores, {}, {})
     assert c["mean_score"] == 3.0
     assert c["score_std"] == 0.0
     assert c["consensus_status"] == "consensus"
 
 def test_consensus_high_disagreement_flagged():
-    scores = {"gptoss_120b": 1, "deepseek_r1": 3, "qwen25_72b": 1}
+    scores = {JUDGE_MODELS[0]: 1, JUDGE_MODELS[1]: 3, JUDGE_MODELS[2]: 1}
     c = compute_consensus("img/a.jpg", "aground", "text", False, scores, {}, {})
     assert c["consensus_status"] == "flagged_for_review"
     assert c["score_std"] > STD_FLAG_THRESHOLD
 
 def test_consensus_all_null_is_parse_error():
-    scores = {"gptoss_120b": None, "deepseek_r1": None, "qwen25_72b": None}
+    scores = {JUDGE_MODELS[0]: None, JUDGE_MODELS[1]: None, JUDGE_MODELS[2]: None}
     c = compute_consensus("img/a.jpg", "aground", "text", False, scores, {}, {})
     assert c["mean_score"] is None
     assert c["consensus_status"] == "parse_error"
 
 def test_consensus_partial_null_excluded_from_mean():
-    scores = {"gptoss_120b": None, "deepseek_r1": 2, "qwen25_72b": 2}
+    scores = {JUDGE_MODELS[0]: None, JUDGE_MODELS[1]: 2, JUDGE_MODELS[2]: 2}
     c = compute_consensus("img/a.jpg", "aground", "text", False, scores, {}, {})
     assert c["mean_score"] == 2.0
 
 def test_consensus_hallucination_union():
-    scores = {"gptoss_120b": 2, "deepseek_r1": 2, "qwen25_72b": 2}
+    scores = {JUDGE_MODELS[0]: 2, JUDGE_MODELS[1]: 2, JUDGE_MODELS[2]: 2}
     hallus = {
         "gptoss_120b": ["smoke"],
         "deepseek_r1": ["fire", "smoke"],
@@ -96,7 +103,7 @@ def test_consensus_hallucination_union():
     assert union == {"smoke", "fire"}
 
 def test_consensus_record_has_image_key():
-    scores = {"gptoss_120b": 3, "deepseek_r1": 3, "qwen25_72b": 3}
+    scores = {JUDGE_MODELS[0]: 3, JUDGE_MODELS[1]: 3, JUDGE_MODELS[2]: 3}
     c = compute_consensus("img/x.jpg", "sunken", "text", False, scores, {}, {})
     assert c["image"] == "img/x.jpg"
 
@@ -104,10 +111,16 @@ def test_consensus_record_has_image_key():
 # ── aggregate_run (integration) ───────────────────────────────────────────────
 
 def _make_three_judge_jsonls(tmp_dir: Path, run_name: str, score_sets: list[dict]):
-    """score_sets: list of 5 dicts {model: score} indexed by sample."""
+    """score_sets: list of 5 dicts {model: score} indexed by sample.
+
+    Keys must be the configured JUDGE_MODELS names.
+    """
     images = [f"img/{i:03d}.jpg" for i in range(5)]
     gt_states = ["aground", "capsized", "on_fire", "sunken", "aground"]
-    models = ["gptoss_120b", "deepseek_r1", "qwen25_72b"]
+    # Must match JUDGE_MODELS: aggregate_run looks for
+    # "{run_name}_{model}.jsonl" per configured judge, so stale names
+    # here mean it finds nothing and silently aggregates 0 records.
+    models = list(JUDGE_MODELS)
     paths = {}
     for model in models:
         recs = [
@@ -122,7 +135,7 @@ def _make_three_judge_jsonls(tmp_dir: Path, run_name: str, score_sets: list[dict
 def test_aggregate_produces_consensus_jsonl():
     with tempfile.TemporaryDirectory() as tmp:
         d = Path(tmp)
-        score_sets = [{"gptoss_120b": 3, "deepseek_r1": 3, "qwen25_72b": 3}] * 5
+        score_sets = [{JUDGE_MODELS[0]: 3, JUDGE_MODELS[1]: 3, JUDGE_MODELS[2]: 3}] * 5
         images, _, _ = _make_three_judge_jsonls(d, "myrun", score_sets)
         consensus_path, flagged_path = aggregate_run("myrun", d)
         assert consensus_path.exists()
@@ -133,11 +146,11 @@ def test_aggregate_flagged_jsonl_contains_disagreements():
     with tempfile.TemporaryDirectory() as tmp:
         d = Path(tmp)
         score_sets = [
-            {"gptoss_120b": 1, "deepseek_r1": 3, "qwen25_72b": 1},  # flagged
-            {"gptoss_120b": 3, "deepseek_r1": 3, "qwen25_72b": 3},  # consensus
-            {"gptoss_120b": 2, "deepseek_r1": 2, "qwen25_72b": 2},  # consensus
-            {"gptoss_120b": 1, "deepseek_r1": 3, "qwen25_72b": 1},  # flagged
-            {"gptoss_120b": 3, "deepseek_r1": 3, "qwen25_72b": 2},  # consensus (std=0.47)
+            {JUDGE_MODELS[0]: 1, JUDGE_MODELS[1]: 3, JUDGE_MODELS[2]: 1},  # flagged
+            {JUDGE_MODELS[0]: 3, JUDGE_MODELS[1]: 3, JUDGE_MODELS[2]: 3},  # consensus
+            {JUDGE_MODELS[0]: 2, JUDGE_MODELS[1]: 2, JUDGE_MODELS[2]: 2},  # consensus
+            {JUDGE_MODELS[0]: 1, JUDGE_MODELS[1]: 3, JUDGE_MODELS[2]: 1},  # flagged
+            {JUDGE_MODELS[0]: 3, JUDGE_MODELS[1]: 3, JUDGE_MODELS[2]: 2},  # consensus (std=0.47)
         ]
         _make_three_judge_jsonls(d, "myrun", score_sets)
         _, flagged_path = aggregate_run("myrun", d)
@@ -149,7 +162,7 @@ def test_aggregate_flagged_jsonl_contains_disagreements():
 def test_aggregate_all_null_scores_parse_error_status():
     with tempfile.TemporaryDirectory() as tmp:
         d = Path(tmp)
-        score_sets = [{"gptoss_120b": None, "deepseek_r1": None, "qwen25_72b": None}] * 5
+        score_sets = [{JUDGE_MODELS[0]: None, JUDGE_MODELS[1]: None, JUDGE_MODELS[2]: None}] * 5
         _make_three_judge_jsonls(d, "myrun", score_sets)
         consensus_path, _ = aggregate_run("myrun", d)
         records = [json.loads(l) for l in consensus_path.read_text(encoding="utf-8").splitlines() if l.strip()]
@@ -158,7 +171,7 @@ def test_aggregate_all_null_scores_parse_error_status():
 def test_aggregate_count_matches_input():
     with tempfile.TemporaryDirectory() as tmp:
         d = Path(tmp)
-        score_sets = [{"gptoss_120b": 2, "deepseek_r1": 3, "qwen25_72b": 2}] * 5
+        score_sets = [{JUDGE_MODELS[0]: 2, JUDGE_MODELS[1]: 3, JUDGE_MODELS[2]: 2}] * 5
         _make_three_judge_jsonls(d, "myrun", score_sets)
         consensus_path, _ = aggregate_run("myrun", d)
         lines = [l for l in consensus_path.read_text(encoding="utf-8").splitlines() if l.strip()]
