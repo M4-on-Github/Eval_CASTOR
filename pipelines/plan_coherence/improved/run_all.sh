@@ -27,7 +27,7 @@ mkdir -p "/data/$USER/logs"
 # SLURM copies this script to /var/spool/slurmd/jobXXX/ before running it,
 # so BASH_SOURCE[0] resolves to that staging path, not the actual script location.
 # SLURM_SUBMIT_DIR is always set to the directory where sbatch was invoked — use that.
-# Submit from improved/:   cd ~/Eval_CASTOR/pipelines/plan_coherence/improved && sbatch run_all.sh
+# Submit from improved/:   cd ~/BenchyBench/Eval_CASTOR/pipelines/plan_coherence/improved && sbatch run_all.sh
 if [[ -n "${SLURM_SUBMIT_DIR:-}" ]]; then
     SCRIPT_DIR="${SLURM_SUBMIT_DIR}"
 else

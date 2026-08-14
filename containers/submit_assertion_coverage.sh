@@ -9,7 +9,7 @@
 # Drop the full-answer JSONL(s) you want scored into p7_to_check/ first
 # (e.g. p7_to_check/answers_baseline.jsonl), then:
 #
-# Run from ~/Eval_CASTOR/ on the head node (head1.condo.cs.cmu.edu):
+# Run from ~/BenchyBench/Eval_CASTOR/ on the head node (head1.condo.cs.cmu.edu):
 #
 #   Process every run staged in p7_to_check/:
 #     bash containers/submit_assertion_coverage.sh

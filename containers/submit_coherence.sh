@@ -6,7 +6,7 @@
 # waits for all 5 to succeed before it starts.
 #
 # Drop the full-answer JSONL(s) you want scored into p8_to_check/ first, then
-# run from ~/Eval_CASTOR/ on the head node (head1.condo.cs.cmu.edu):
+# run from ~/BenchyBench/Eval_CASTOR/ on the head node (head1.condo.cs.cmu.edu):
 #
 #   bash containers/submit_coherence.sh                      # all JSONLs in p8_to_check/
 #   bash containers/submit_coherence.sh --run answers_baseline  # single run

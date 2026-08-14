@@ -12,7 +12,7 @@
 # element-wise: array task N of Stage 2+3+4 starts as soon as array task N of
 # Stage 1 succeeds, without waiting for the rest of the batch.
 #
-# Run from ~/Eval_CASTOR/ on the head node (head1.condo.cs.cmu.edu):
+# Run from ~/BenchyBench/Eval_CASTOR/ on the head node (head1.condo.cs.cmu.edu):
 #
 #   Process every run staged in p6_plans_to_judge/ (drop full-answer JSONLs
 #   there -- one submit_salvage.sh call judges all of them, as one batch job

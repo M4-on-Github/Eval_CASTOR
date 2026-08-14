@@ -73,7 +73,7 @@ Default: `selene-1-mini-llama-3.1-8b-awq` (Selene 8B fits on 1 GPU, ~6 GB VRAM).
 ## Run
 
 ```bash
-cd ~/Eval_CASTOR/pipelines/plan_coherence/improved
+cd ~/BenchyBench/Eval_CASTOR/pipelines/plan_coherence/improved
 sbatch run_all.sh
 ```
 

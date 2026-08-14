@@ -20,7 +20,7 @@
 #                    are downloaded by judge_panel_submit.sh, not here.
 #   --force          Rebuild the SIF even if hash matches.
 #
-# Run from ~/Eval_CASTOR/:
+# Run from ~/BenchyBench/Eval_CASTOR/:
 #   bash containers/build_judge_container.sh
 #   bash containers/build_judge_container.sh --model qwen25_72b
 #

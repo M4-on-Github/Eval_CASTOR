@@ -2,7 +2,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # CASTOR Judge Panel — unified setup and submission script.
 #
-# Run from ~/Eval_CASTOR/ on the head node. Safe to re-run at any point:
+# Run from ~/BenchyBench/Eval_CASTOR/ on the head node. Safe to re-run at any point:
 # existing weights are detected and reused, already-scored records are skipped.
 #
 # For each model the script determines what is needed and submits a

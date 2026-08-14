@@ -18,6 +18,15 @@ DeGF, ONLY, or QWEN repos.
 | P6 | Salvage plan templating analysis | `containers/submit_salvage.sh` | vLLM + embeddings on cluster |
 | P7 | Assertion coverage (domain concept coverage) | `containers/submit_assertion_coverage.sh` | vLLM on cluster |
 | P8 | Plan coherence (step-by-step logical sequencing) | `containers/submit_coherence.sh` | vLLM on cluster |
+| P8+ | Plan coherence, improved assertions | `pipelines/plan_coherence/improved/run_all.sh` | vLLM on cluster |
+
+**P8+** supersedes P8 and is self-contained under
+`pipelines/plan_coherence/improved/` — its own `config.yaml`, prompts,
+assertions, and a one-shot `run_all.sh` chaining inference → assertion coverage
+→ judge → aggregation. It has its own
+[README](pipelines/plan_coherence/improved/README.md). Edit the `paths:` block
+in `config.yaml` before the first run; paths are expressed relative to
+`${BENCHYBENCH_ROOT}`, which `run_all.sh` resolves and verifies.
 
 All cluster pipelines share a single Apptainer container (`castor_judge.sif`)
 built from `containers/container_judge.def` (vLLM 0.8.5 + pandas/scipy/
