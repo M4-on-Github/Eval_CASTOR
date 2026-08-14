@@ -112,38 +112,89 @@ Judge each field and return the JSON verdict."""
 # Helpers
 # ---------------------------------------------------------------------------
 
+class JudgePromptBuilder:
+    """Builds the (system, user) prompt pair sent to the semantic judge.
+
+    Two modes, matching the two P3 entry points:
+
+      full       the model's raw answer is shown to the judge
+      extracted  Gemma-extracted fields are shown instead of prose
+
+    Both interpolate the same ground truth, so the judge always compares
+    against the identical reference regardless of what it is shown.
+    """
+
+    #: Characters of model output shown to the judge in full mode.
+    TEXT_WINDOW = _TEXT_WINDOW
+
+    @staticmethod
+    def normalise_value(v) -> str:
+        """Render an extracted field for the prompt.
+
+        None becomes "UNKNOWN", as does the literal string in any case, so the
+        judge sees one consistent token for "the model did not say". An EMPTY
+        string is left alone — that means the field was absent from the
+        extraction, which is a different thing from the model declining.
+        """
+        if v is None:
+            return "UNKNOWN"
+        s = str(v).strip()
+        return "UNKNOWN" if s.upper() == "UNKNOWN" else s
+
+    @classmethod
+    def _gt_fields(cls, gt: dict) -> dict:
+        return dict(
+            gt_state=gt.get("state", ""), gt_vessel_type=gt.get("vessel_type", ""),
+            gt_size=gt.get("size_estimate", ""), gt_cargo=gt.get("cargo", ""),
+            gt_q1=gt.get("q1", ""), gt_q2=gt.get("q2", ""),
+            gt_q3=gt.get("q3", ""), gt_q4=gt.get("q4", ""), gt_q5=gt.get("q5", ""),
+        )
+
+    @classmethod
+    def excerpt(cls, text: str) -> str:
+        """Trim long output to the window shown to the judge.
+
+        Keeps the TAIL, not the head. Chain-of-thought answers put the JSON
+        verdict LAST, so truncating from the front would discard exactly the
+        content being judged and the judge would score the reasoning preamble.
+        """
+        return text[-cls.TEXT_WINDOW:] if len(text) > cls.TEXT_WINDOW else text
+
+    @classmethod
+    def build_full(cls, text: str, gt: dict) -> tuple:
+        user = _USER_FULL.format(window=cls.TEXT_WINDOW,
+                                 excerpt=cls.excerpt(text),
+                                 **cls._gt_fields(gt))
+        return _SYS_FULL, user
+
+    @classmethod
+    def build_extracted(cls, gemma_rec: dict, gt: dict) -> tuple:
+        gv = cls.normalise_value
+        user = _USER_EXTR.format(
+            pred_state=gv(gemma_rec.get("state")),
+            pred_vessel=gv(gemma_rec.get("vessel_type")),
+            pred_size=gv(gemma_rec.get("size_estimate")),
+            pred_cargo=gv(gemma_rec.get("cargo")),
+            pred_q1=gv(gemma_rec.get("q1")), pred_q2=gv(gemma_rec.get("q2")),
+            pred_q3=gv(gemma_rec.get("q3")), pred_q4=gv(gemma_rec.get("q4")),
+            pred_q5=gv(gemma_rec.get("q5")),
+            **cls._gt_fields(gt))
+        return _SYS_EXTR, user
+
+
 def _gv(v) -> str:
-    if v is None:
-        return "UNKNOWN"
-    s = str(v).strip()
-    return "UNKNOWN" if s.upper() == "UNKNOWN" else s
+    """Normalise an extracted field. Facade over JudgePromptBuilder."""
+    return JudgePromptBuilder.normalise_value(v)
 
 
 def build_prompt_full(text: str, gt: dict) -> tuple:
-    excerpt = text[-_TEXT_WINDOW:] if len(text) > _TEXT_WINDOW else text
-    user = _USER_FULL.format(
-        gt_state=gt.get("state", ""), gt_vessel_type=gt.get("vessel_type", ""),
-        gt_size=gt.get("size_estimate", ""), gt_cargo=gt.get("cargo", ""),
-        gt_q1=gt.get("q1", ""), gt_q2=gt.get("q2", ""),
-        gt_q3=gt.get("q3", ""), gt_q4=gt.get("q4", ""), gt_q5=gt.get("q5", ""),
-        window=_TEXT_WINDOW, excerpt=excerpt,
-    )
-    return _SYS_FULL, user
+    """Prompt showing the model's raw answer. Facade."""
+    return JudgePromptBuilder.build_full(text, gt)
 
 
 def build_prompt_extracted(gemma_rec: dict, gt: dict) -> tuple:
-    user = _USER_EXTR.format(
-        gt_state=gt.get("state", ""), gt_vessel_type=gt.get("vessel_type", ""),
-        gt_size=gt.get("size_estimate", ""), gt_cargo=gt.get("cargo", ""),
-        gt_q1=gt.get("q1", ""), gt_q2=gt.get("q2", ""),
-        gt_q3=gt.get("q3", ""), gt_q4=gt.get("q4", ""), gt_q5=gt.get("q5", ""),
-        pred_state=_gv(gemma_rec.get("state")), pred_vessel=_gv(gemma_rec.get("vessel_type")),
-        pred_size=_gv(gemma_rec.get("size_estimate")), pred_cargo=_gv(gemma_rec.get("cargo")),
-        pred_q1=_gv(gemma_rec.get("q1")), pred_q2=_gv(gemma_rec.get("q2")),
-        pred_q3=_gv(gemma_rec.get("q3")), pred_q4=_gv(gemma_rec.get("q4")),
-        pred_q5=_gv(gemma_rec.get("q5")),
-    )
-    return _SYS_EXTR, user
+    """Prompt showing Gemma-extracted fields. Facade."""
+    return JudgePromptBuilder.build_extracted(gemma_rec, gt)
 
 
 def load_gemma_parsed(path: Path) -> dict:
@@ -162,20 +213,51 @@ def load_existing_verdicts(path: Path) -> set:
     return done
 
 
+class VerdictUnpacker:
+    """Flattens the judge's JSON reply into per-field flags and reasons.
+
+    The judge is asked for {"state": {"correct": bool, "reason": str}, ...} but
+    does not always comply, so three shapes are accepted per field: the full
+    dict, a bare bool, or anything else.
+
+    CAUTION — an unusable verdict is recorded as correct=False, which is
+    indistinguishable in the output from the judge saying the answer was wrong.
+    A judge FORMATTING failure therefore depresses the reported accuracy rather
+    than being excluded from it.
+
+    That is a real limitation, not an oversight to work around silently: the
+    reason string preserves the offending value ("unexpected: ..."), so such
+    records remain findable after the fact. Compare PanelVote in
+    judge_panel/aggregate.py, which does keep the distinction by emitting a
+    "no_score" verdict — the two pipelines differ here deliberately, because P3
+    has a single judge and no second opinion to fall back on.
+
+    Every field always appears in the output so downstream frames have a
+    uniform shape.
+    """
+
+    FIELDS = JUDGE_FIELDS
+
+    @classmethod
+    def unpack(cls, parsed: dict) -> dict:
+        result = {}
+        for field in cls.FIELDS:
+            val = parsed.get(field)
+            if isinstance(val, dict):
+                result[field] = bool(val.get("correct", False))
+                result[f"{field}_reason"] = str(val.get("reason", ""))
+            elif isinstance(val, bool):
+                result[field] = val
+                result[f"{field}_reason"] = ""
+            else:
+                result[field] = False
+                result[f"{field}_reason"] = f"unexpected: {val!r}"
+        return result
+
+
 def unpack_verdict(parsed: dict) -> dict:
-    result = {}
-    for field in JUDGE_FIELDS:
-        val = parsed.get(field)
-        if isinstance(val, dict):
-            result[field] = bool(val.get("correct", False))
-            result[f"{field}_reason"] = str(val.get("reason", ""))
-        elif isinstance(val, bool):
-            result[field] = val
-            result[f"{field}_reason"] = ""
-        else:
-            result[field] = False
-            result[f"{field}_reason"] = f"unexpected: {val!r}"
-    return result
+    """Flatten a judge reply. Facade over VerdictUnpacker."""
+    return VerdictUnpacker.unpack(parsed)
 
 
 # ---------------------------------------------------------------------------
