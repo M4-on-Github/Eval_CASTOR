@@ -37,43 +37,96 @@ GT_PATH = EVAL_ROOT / "human_ground_truth_label" / "human_gt.csv"
 # Public helpers (tested directly)
 # ---------------------------------------------------------------------------
 
+class TypicalityAnalysis:
+    """Measures how closely a plan matches the norm for its casualty state.
+
+    This is the core of P6's templating question. A model that writes the same
+    plan regardless of what it is looking at will score highly typical for
+    every state — high typicality is EVIDENCE OF BOILERPLATE, not of quality.
+    The finding is the distribution, not any single score.
+
+    Three steps, each a method here:
+
+      element_sets   raw phrasings -> canonical elements (via Stage 2)
+      modal_set      what a strict majority of a state's plans contain
+      typicality     Jaccard overlap between one plan and that majority
+    """
+
+    #: An element must appear in MORE than this share of a state's plans to
+    #: count as modal. Strict majority, so exactly half does not qualify —
+    #: an element present in half the plans is not characteristic of the state.
+    MODAL_THRESHOLD = 0.5
+
+    @staticmethod
+    def element_sets(raw_elements_by_image: dict, raw_to_canonical: dict) -> dict:
+        """Map each image's raw phrases to canonical elements.
+
+        Phrases with no canonical mapping are DROPPED silently. That is
+        deliberate — Stage 2 clusters only phrasings it saw often enough to be
+        confident about, and admitting the unmapped remainder would let one-off
+        wordings masquerade as distinct elements and inflate every set.
+        """
+        result = {}
+        for image, raw_phrases in raw_elements_by_image.items():
+            canonical = {raw_to_canonical[p] for p in raw_phrases if p in raw_to_canonical}
+            result[image] = canonical
+        return result
+
+    @classmethod
+    def modal_set(cls, element_sets: dict, grouping: dict, target_group: str) -> set:
+        """Elements present in a strict majority of one group's plans.
+
+        Returns an empty set for a group with no images — not an error, since
+        a state may legitimately be absent from a run.
+        """
+        images = [img for img, group in grouping.items() if group == target_group]
+        if not images:
+            return set()
+
+        all_elements = set()
+        for img in images:
+            all_elements |= element_sets.get(img, set())
+
+        modal = set()
+        for element in all_elements:
+            count = sum(1 for img in images if element in element_sets.get(img, set()))
+            if count / len(images) > cls.MODAL_THRESHOLD:
+                modal.add(element)
+        return modal
+
+    @staticmethod
+    def typicality(element_set: set, modal_set: set) -> float:
+        """Jaccard overlap between one plan and its state's modal set.
+
+        Two empty sets score 1.0. That is the honest reading of Jaccard on
+        empty input — nothing was typical and nothing was said, so they agree
+        completely — but it means a state where NO element reached the modal
+        threshold will report every one of its empty plans as perfectly
+        typical. Check the modal set is non-empty before reading such a score
+        as evidence of templating.
+        """
+        if not element_set and not modal_set:
+            return 1.0
+        union = element_set | modal_set
+        intersection = element_set & modal_set
+        return len(intersection) / len(union)
+
+
+# ── Compatibility facade ─────────────────────────────────────────────────────
+
 def build_element_sets(raw_elements_by_image: dict, raw_to_canonical: dict) -> dict:
-    """Map each image's raw extracted phrases to canonical elements via
-    Stage 2's mapping. Unmapped phrases are silently dropped."""
-    result = {}
-    for image, raw_phrases in raw_elements_by_image.items():
-        canonical = {raw_to_canonical[p] for p in raw_phrases if p in raw_to_canonical}
-        result[image] = canonical
-    return result
+    """Map raw phrases to canonical elements. Facade over TypicalityAnalysis."""
+    return TypicalityAnalysis.element_sets(raw_elements_by_image, raw_to_canonical)
 
 
 def modal_element_set(element_sets: dict, grouping: dict, target_group: str) -> set:
-    """The set of elements present in a strict majority (>50%) of images
-    whose grouping[image] == target_group."""
-    images = [img for img, group in grouping.items() if group == target_group]
-    if not images:
-        return set()
-
-    all_elements = set()
-    for img in images:
-        all_elements |= element_sets.get(img, set())
-
-    modal = set()
-    for element in all_elements:
-        count = sum(1 for img in images if element in element_sets.get(img, set()))
-        if count / len(images) > 0.5:
-            modal.add(element)
-    return modal
+    """Elements in a strict majority of a group's plans. Facade."""
+    return TypicalityAnalysis.modal_set(element_sets, grouping, target_group)
 
 
 def typicality_score(element_set: set, modal_set: set) -> float:
-    """Jaccard similarity between a record's element set and its state's
-    modal set. Both empty -> 1.0 (perfect match: nothing typical, nothing said)."""
-    if not element_set and not modal_set:
-        return 1.0
-    union = element_set | modal_set
-    intersection = element_set & modal_set
-    return len(intersection) / len(union)
+    """Jaccard similarity to the modal set. Facade."""
+    return TypicalityAnalysis.typicality(element_set, modal_set)
 
 
 def build_contingency_table(images: list, predicted_state: dict, gt_state: dict,
