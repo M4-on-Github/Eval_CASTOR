@@ -35,7 +35,33 @@ else
 fi
 CONFIG="${SCRIPT_DIR}/config.yaml"
 
-# os.path.expandvars() expands ${USER} / ${HOME} on the cluster at runtime.
+# ---------------------------------------------------------------------------
+# Resolve the BenchyBench root, which config.yaml refers to as
+# ${BENCHYBENCH_ROOT}. This pipeline sits four levels below it:
+#   <root>/Eval_CASTOR/pipelines/plan_coherence/improved
+#
+# The root is confirmed by probing for the image set rather than assumed, so a
+# wrong guess fails here with a clear message instead of surfacing as a missing
+# file deep inside a GPU job. config.yaml previously hardcoded
+# /home/$USER/ONLY/CASTOR/shipwreck_wiki_images, which exists in no current
+# layout — the images live once at the BenchyBench root.
+# ---------------------------------------------------------------------------
+if [[ -z "${BENCHYBENCH_ROOT:-}" ]]; then
+    BENCHYBENCH_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
+fi
+export BENCHYBENCH_ROOT
+
+if [[ ! -d "${BENCHYBENCH_ROOT}/shipwreck_wiki_images/sorted_images" ]]; then
+    echo "ERROR: BENCHYBENCH_ROOT does not contain the image set." >&2
+    echo "       BENCHYBENCH_ROOT = ${BENCHYBENCH_ROOT}" >&2
+    echo "       expected         = ${BENCHYBENCH_ROOT}/shipwreck_wiki_images/sorted_images" >&2
+    echo "       Set BENCHYBENCH_ROOT to the directory containing" >&2
+    echo "       shipwreck_wiki_images/ and re-submit." >&2
+    exit 1
+fi
+echo "[$(date)] BenchyBench root: ${BENCHYBENCH_ROOT}"
+
+# os.path.expandvars() expands ${USER} / ${HOME} / ${BENCHYBENCH_ROOT} at runtime.
 _pypath() {
     python3 -c "import yaml, os; c=yaml.safe_load(open('${CONFIG}')); print(os.path.expandvars(c${1}))"
 }

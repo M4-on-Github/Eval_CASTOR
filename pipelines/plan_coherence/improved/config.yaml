@@ -9,19 +9,23 @@
 # -----------------------------------------------------------------------------
 paths:
   # Root directory containing aground/ capsized/ sunken/ on_fire/ image subdirs
-  # Images live in the ONLY repo (shared across methods).
-  images_dir: /home/${USER}/ONLY/CASTOR/shipwreck_wiki_images/sorted_images
+  # Images live once at the BenchyBench root, NOT inside any method repo.
+  # This previously pointed at ~/ONLY/CASTOR/shipwreck_wiki_images, from before
+  # BenchyBench absorbed the repos as submodules and the images were
+  # consolidated; that path exists in no current layout.
+  # BENCHYBENCH_ROOT is exported by run_all.sh and expanded via expandvars().
+  images_dir: ${BENCHYBENCH_ROOT}/shipwreck_wiki_images/sorted_images
 
   # Base directory where model weights live (all per-user on pleiades)
   # VLM:   /data/$USER/qwen3vl-8b          (downloaded by QWEN/CASTOR/build_container.sh)
   # Judge: /data/$USER/llama-3.3-70b-instruct-w4a16  (downloaded by Eval_CASTOR/containers/download_job.sh)
   user_models_dir: /data/${USER}
 
-  # Where this repo lives on the cluster (parent of improved/)
-  pipeline_dir: /home/${USER}/Eval_CASTOR/pipelines/plan_coherence/improved
+  # Where this pipeline lives on the cluster (parent of improved/)
+  pipeline_dir: ${BENCHYBENCH_ROOT}/Eval_CASTOR/pipelines/plan_coherence/improved
 
   # Ground truth CSV
-  gt_csv: /home/${USER}/Eval_CASTOR/human_ground_truth_label/human_gt.csv
+  gt_csv: ${BENCHYBENCH_ROOT}/Eval_CASTOR/human_ground_truth_label/human_gt.csv
 
   # Inference container: QWEN repo SIF — torch 2.3.1 + transformers>=4.51 + qwen-vl-utils
   # Built by QWEN/CASTOR/build_container.sh (sbatch QWEN/CASTOR/submit.sh runs it automatically)
