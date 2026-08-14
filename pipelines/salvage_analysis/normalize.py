@@ -46,38 +46,86 @@ DEFAULT_LOCAL_EMBED_MODEL = os.environ.get("CASTOR_SALVAGE_EMBED_MODEL", "senten
 # Public helpers (tested directly)
 # ---------------------------------------------------------------------------
 
+class PhraseClusterer:
+    """Collapses many phrasings of one salvage action into a canonical label.
+
+    Models describe the same action a dozen ways — "deploy tugs", "bring in
+    tugboats", "tug assistance" — and every distinct phrasing would otherwise
+    count as its own element, scattering the evidence for one concept across
+    a dozen near-empty rows and destroying the Stage 4 statistics.
+
+    Clustering is agglomerative over cosine distance between embeddings, with
+    average linkage: a phrase joins a cluster on its mean distance to the
+    members, so one outlier cannot pull in an unrelated phrase the way single
+    linkage would.
+
+    THE THRESHOLD HAS NO DEFAULT, deliberately. It is the single knob that
+    decides how aggressively distinct concepts are merged, and a wrong value
+    fails silently in both directions — too high fuses unrelated actions into
+    one element, too low leaves synonyms scattered. Neither raises; both just
+    change the finding. Callers must state a value.
+    """
+
+    #: Average linkage over cosine distance — see the class docstring.
+    METRIC = "cosine"
+    LINKAGE = "average"
+
+    def __init__(self, threshold: float):
+        self.threshold = threshold
+
+    @staticmethod
+    def canonical_label(members: list) -> str:
+        """Pick the cluster's representative: shortest phrase, ties alphabetical.
+
+        Shortest because the briefest phrasing is usually the least
+        model-specific ("deploy tugs" over "bring in tugboat assistance from
+        the nearest port"). Alphabetical tie-break keeps the choice
+        deterministic, so re-running produces the same element names and two
+        runs remain comparable.
+        """
+        return sorted(members, key=lambda p: (len(p), p))[0]
+
+    def cluster(self, phrase_to_vector: dict) -> dict:
+        """Return {raw_phrase: canonical_label}."""
+        phrases = list(phrase_to_vector.keys())
+        if not phrases:
+            return {}
+        if len(phrases) == 1:
+            # AgglomerativeClustering needs at least two samples.
+            return {phrases[0]: phrases[0]}
+
+        vectors = [phrase_to_vector[p] for p in phrases]
+        clustering = AgglomerativeClustering(
+            n_clusters=None,
+            distance_threshold=self.threshold,
+            metric=self.METRIC,
+            linkage=self.LINKAGE,
+        )
+        labels = clustering.fit_predict(vectors)
+
+        clusters = {}
+        for phrase, label in zip(phrases, labels):
+            clusters.setdefault(label, []).append(phrase)
+
+        mapping = {}
+        for members in clusters.values():
+            canonical = self.canonical_label(members)
+            for phrase in members:
+                mapping[phrase] = canonical
+        return mapping
+
+
 def cluster_phrases(phrase_to_vector: dict, threshold: float) -> dict:
     """Cluster raw phrases by cosine distance between their embeddings.
 
     Returns {raw_phrase: canonical_label}, where canonical_label is one of
     the original phrases in that cluster (the shortest one, tie-broken
     alphabetically). threshold has no default — callers must pass one
-    explicitly (see module docstring)."""
-    phrases = list(phrase_to_vector.keys())
-    if not phrases:
-        return {}
-    if len(phrases) == 1:
-        return {phrases[0]: phrases[0]}
+    explicitly (see module docstring).
 
-    vectors = [phrase_to_vector[p] for p in phrases]
-    clustering = AgglomerativeClustering(
-        n_clusters=None,
-        distance_threshold=threshold,
-        metric="cosine",
-        linkage="average",
-    )
-    labels = clustering.fit_predict(vectors)
-
-    clusters = {}
-    for phrase, label in zip(phrases, labels):
-        clusters.setdefault(label, []).append(phrase)
-
-    mapping = {}
-    for members in clusters.values():
-        canonical = sorted(members, key=lambda p: (len(p), p))[0]
-        for phrase in members:
-            mapping[phrase] = canonical
-    return mapping
+    Facade over PhraseClusterer.
+    """
+    return PhraseClusterer(threshold).cluster(phrase_to_vector)
 
 
 # ---------------------------------------------------------------------------

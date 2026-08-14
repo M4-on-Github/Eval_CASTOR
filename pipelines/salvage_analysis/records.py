@@ -41,36 +41,77 @@ _SALVAGE_PLAN_HEADING_RE = re.compile(
 )
 
 
-def _extract_salvage_plan_section(text: str):
-    """Locate a "Salvage Plan" markdown heading and return everything after
-    it. Returns None if no such heading is found (caller falls back to the
-    whole text as a last resort -- see module docstring)."""
-    match = _SALVAGE_PLAN_HEADING_RE.search(text)
-    if match is None:
+class FieldExtractor:
+    """Recovers one field from an inference record, however it was written.
+
+    The same field arrives in three shapes depending on the prompt variant and
+    how well the model complied, so they are tried in DESCENDING order of
+    confidence:
+
+      1. a top-level key on the record — already extracted upstream
+      2. a key inside a JSON block in the model's text
+      3. for recovery_considerations only, the prose under a "Salvage Plan"
+         markdown heading
+
+    Never raises. A field that cannot be found is None, and the caller decides
+    whether that is fatal — P6 runs over many records and one malformed answer
+    must not abort the analysis.
+
+    The heading fallback is DELIBERATELY LIMITED to recovery_considerations.
+    That field is long-form prose the model often writes as markdown rather
+    than JSON, so a heading is a reliable marker. Applying the same fallback to
+    a short field like `state` would let arbitrary prose masquerade as a value.
+    """
+
+    #: "## Salvage Plan", "**Salvage Plan**", "Salvage Plan:" and so on.
+    HEADING_RE = _SALVAGE_PLAN_HEADING_RE
+
+    #: The only field permitted the prose fallback — see the class docstring.
+    PROSE_FALLBACK_FIELD = "recovery_considerations"
+
+    @classmethod
+    def salvage_plan_section(cls, text: str):
+        """Text following a "Salvage Plan" heading, or None if absent."""
+        match = cls.HEADING_RE.search(text)
+        if match is None:
+            return None
+        section = text[match.end():].strip()
+        return section or None
+
+    @classmethod
+    def get(cls, record: dict, field: str):
+        """Return the field's value, or None. Never raises."""
+        direct = record.get(field)
+        if isinstance(direct, str):
+            return direct
+
+        text = record.get("text")
+        if not text:
+            return None
+
+        parsed, _reason = extract_json_block(text)
+        if parsed is not None:
+            value = parsed.get(field)
+            if value is not None:
+                return value
+
+        if field == cls.PROSE_FALLBACK_FIELD:
+            # Last resort: if there is no heading either, use the whole answer.
+            # Better to over-supply text to the element extractor than to drop
+            # a record that plainly contains a plan.
+            section = cls.salvage_plan_section(text)
+            return section if section is not None else text
+
         return None
-    section = text[match.end():].strip()
-    return section or None
+
+
+# ── Compatibility facade ─────────────────────────────────────────────────────
+
+def _extract_salvage_plan_section(text: str):
+    """Text after a "Salvage Plan" heading, or None. Facade."""
+    return FieldExtractor.salvage_plan_section(text)
 
 
 def get_field_text(record: dict, field: str):
-    """Return record's field value, or None if extraction or the field
-    lookup fails. Never raises."""
-    direct = record.get(field)
-    if isinstance(direct, str):
-        return direct
-
-    text = record.get("text")
-    if not text:
-        return None
-
-    parsed, _reason = extract_json_block(text)
-    if parsed is not None:
-        value = parsed.get(field)
-        if value is not None:
-            return value
-
-    if field == "recovery_considerations":
-        section = _extract_salvage_plan_section(text)
-        return section if section is not None else text
-
-    return None
+    """Return record's field value, or None. Never raises. Facade."""
+    return FieldExtractor.get(record, field)
