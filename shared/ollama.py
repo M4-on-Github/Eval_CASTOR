@@ -10,11 +10,40 @@ import urllib.error
 import urllib.request
 
 
+class OllamaClient:
+    """Talks to a local Ollama server for the pipelines that use one.
+
+    P2 (Gemma field extraction) and P3 (semantic judge) run against Ollama
+    rather than the cluster's vLLM, so they can be developed and debugged on a
+    laptop without a SLURM allocation. The cluster pipelines (P5-P8) use vLLM
+    instead — this client is not involved there.
+
+    Two settings are load-bearing:
+
+      format="json"   asks Ollama to constrain output to valid JSON. It reduces
+                      parse failures but does not eliminate them, which is why
+                      every caller still handles a None parse.
+      timeout 180s    a judge reasoning over a long plan genuinely takes over a
+                      minute on CPU. A shorter timeout silently converts slow
+                      records into failures and biases the result toward short
+                      answers.
+
+    Returns (parsed, raw, elapsed) rather than raising, so one bad record does
+    not abort a run over a hundred images. The raw text is returned even on a
+    parse failure — it is the only diagnostic left afterwards.
+    """
+
+    #: Ollama genuinely needs this long for a judge over a long plan on CPU.
+    TIMEOUT_SECONDS = 180
+
+
 def call_ollama(system: str, user: str, model: str, url: str,
                 options: dict = None) -> tuple:
     """POST to Ollama /api/chat. Returns (parsed_dict | None, raw_str, elapsed_s).
 
     options dict is passed as Ollama model options (e.g. {"temperature": 0, "num_predict": 1024}).
+
+    See OllamaClient for why the timeout and format settings matter.
     """
     payload_obj = {
         "model":    model,

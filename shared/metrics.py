@@ -42,11 +42,38 @@ def _unescape(text: str) -> str:
 # Extraction helpers (regex-based, used by Pipeline 1)
 # ---------------------------------------------------------------------------
 
+class JsonBlockExtractor:
+    """Finds the answer object inside free-form model output.
+
+    Models wrap their JSON in prose, emit several objects, or truncate
+    mid-structure. This recovers the intended one.
+
+    SCANS BRACE POSITIONS IN REVERSE, and that direction is deliberate.
+    Chain-of-thought answers reason first and conclude last, so the final
+    object is the answer while earlier ones are working. Scanning forward
+    would return the model's first draft.
+
+    Preference order:
+      1. the outermost block containing a 'state' key — the answer shape
+      2. any valid dict — reported with "no_state_key" so the caller knows
+         something parsed but was not the expected object
+      3. None, with a reason listing what was tried
+
+    The reason string is never empty on failure. It is the only evidence of
+    WHY a record failed once the run is over.
+    """
+
+    #: Failure reasons are capped so one pathological record cannot flood a log.
+    MAX_REPORTED_ERRORS = 5
+
+
 def extract_json_block(text: str):
     """Return (parsed_dict | None, failure_reason_str).
 
     Scans brace positions in reverse. Prefers the outermost block containing a
     'state' key; falls back to any valid dict; returns None on total failure.
+
+    See JsonBlockExtractor for why the scan runs in reverse.
     """
     text = _unescape(text)
     positions = [m.start() for m in re.finditer(r'\{', text)]
@@ -147,38 +174,93 @@ def extract_q_answers(text: str, prompt_style: str) -> dict:
     return result
 
 
+class FieldComparison:
+    """Scores a predicted field against ground truth.
+
+    Each of the four CASTOR fields is compared differently, because each is
+    wrong in a different way:
+
+      state   exact match after normalisation. It is a closed set, so anything
+              outside it is a parse failure rather than a near miss.
+      size    bucketed to small/medium/large. Models phrase this a dozen ways
+              ("roughly 200m", "a large cargo vessel"), and only the bucket is
+              comparable against ground truth.
+      vessel  token Jaccard, NOT exact match. "cargo ship" and "large cargo
+              vessel" describe the same thing, and demanding exact strings
+              would score correct answers wrong.
+      cargo   PRESENCE only, not identity — see cargo_agreement().
+    """
+
+    SIZE_BUCKETS = ("small", "medium", "large")
+    UNKNOWN = "unknown"
+    #: Strings that mean "no cargo recorded" once lower-cased. "nan" appears
+    #: because ground truth arrives via pandas, which renders empty cells that
+    #: way rather than as an empty string.
+    NULL_VALUES = {"", "nan", "none", "null"}
+
+    @classmethod
+    def size_bucket(cls, text: str) -> str:
+        """First size word present, or "unknown".
+
+        Word-boundary matched, so "largely" does not read as "large". Order is
+        small/medium/large, which decides a text mentioning two — rare, but it
+        makes the outcome deterministic rather than dependent on phrasing.
+        """
+        t = text.lower() if text else ""
+        for bucket in cls.SIZE_BUCKETS:
+            if re.search(r'\b' + bucket + r'\b', t):
+                return bucket
+        return cls.UNKNOWN
+
+    @staticmethod
+    def vessel_overlap(gt_text: str, pred_text: str) -> float:
+        """Token Jaccard between two vessel descriptions.
+
+        Two empty strings score 1.0 — both said nothing, so they agree. One
+        empty scores 0.0, since a description and a blank do not.
+        """
+        def tok(s):
+            return set(re.findall(r'[a-z]+', s.lower())) if s else set()
+        a, b = tok(gt_text), tok(pred_text)
+        if not a and not b:
+            return 1.0
+        if not a or not b:
+            return 0.0
+        return len(a & b) / len(a | b)
+
+    @classmethod
+    def cargo_agreement(cls, gt_cargo: str, pred_cargo) -> str:
+        """Whether both, neither, or only one side recorded cargo.
+
+        Deliberately compares PRESENCE, not identity. Ground-truth cargo is
+        free text from a human labeller and model output is free text too, so
+        checking they name the same goods would mostly measure vocabulary
+        overlap. The answerable question is whether the model noticed cargo at
+        all when there was some — and that is what this returns.
+        """
+        gt_has = gt_cargo.lower() not in cls.NULL_VALUES
+        pc = str(pred_cargo).lower() if pred_cargo is not None else ""
+        pred_has = pc not in cls.NULL_VALUES
+        if gt_has and pred_has:
+            return "both_present"
+        if not gt_has and not pred_has:
+            return "both_absent"
+        return "mismatch"
+
+
 def normalize_size(text: str) -> str:
-    t = text.lower() if text else ""
-    if re.search(r'\bsmall\b', t):
-        return "small"
-    if re.search(r'\bmedium\b', t):
-        return "medium"
-    if re.search(r'\blarge\b', t):
-        return "large"
-    return "unknown"
+    """Bucket a size description. Facade over FieldComparison."""
+    return FieldComparison.size_bucket(text)
 
 
 def vessel_jaccard(gt_text: str, pred_text: str) -> float:
-    def tok(s):
-        return set(re.findall(r'[a-z]+', s.lower())) if s else set()
-    a, b = tok(gt_text), tok(pred_text)
-    if not a and not b:
-        return 1.0
-    if not a or not b:
-        return 0.0
-    return len(a & b) / len(a | b)
+    """Token Jaccard between vessel descriptions. Facade."""
+    return FieldComparison.vessel_overlap(gt_text, pred_text)
 
 
 def cargo_match(gt_cargo: str, pred_cargo) -> str:
-    null_vals = {"", "nan", "none", "null"}
-    gt_has   = gt_cargo.lower() not in null_vals
-    pc       = str(pred_cargo).lower() if pred_cargo is not None else ""
-    pred_has = pc not in null_vals
-    if gt_has and pred_has:
-        return "both_present"
-    if not gt_has and not pred_has:
-        return "both_absent"
-    return "mismatch"
+    """Cargo presence agreement. Facade."""
+    return FieldComparison.cargo_agreement(gt_cargo, pred_cargo)
 
 
 def gemma_val(v):

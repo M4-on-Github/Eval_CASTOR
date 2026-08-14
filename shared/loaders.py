@@ -37,10 +37,35 @@ def load_ground_truth(csv_path: Path) -> dict:
     return gt
 
 
+class SlashNFormat:
+    """Reader for the malformed JSONL some models produced.
+
+    A ministral-family run wrote its output with the literal two characters
+    "/n" wherever a newline belonged — including between records. The whole
+    file is therefore ONE physical line, with records delimited by "}/n{" and
+    "/n" standing in for newlines inside strings.
+
+    Standard JSONL parsing returns zero records from such a file rather than
+    raising, so load_run() falls back here whenever the normal path finds
+    nothing. Without the fallback those runs would silently evaluate as empty.
+
+    The files are historical; nothing generates this format now. It is kept
+    because the affected runs are still in the results tree and re-running
+    them is not free.
+    """
+
+    #: Record boundary in the collapsed single-line file.
+    SEPARATOR = "}/n{"
+    #: Stand-in for a newline, both inside strings and between records.
+    NEWLINE_TOKEN = "/n"
+
+
 def _load_slash_n_jsonl(jsonl_path: Path) -> list:
     """Fallback for ministral-style files that use literal /n as the record separator.
     The entire file is one line; records are delimited by }/n{ with /n inside strings
     standing in for actual newlines.
+
+    See SlashNFormat for why this format exists and why it is still supported.
     """
     with open(jsonl_path, encoding="utf-8") as f:
         content = f.read().rstrip()
