@@ -82,52 +82,131 @@ def _user_prompt(plan_text: str, assertion_text: str) -> str:
 # Registry loading
 # ---------------------------------------------------------------------------
 
+class AssertionRegistry:
+    """The domain assertions a salvage plan is measured against.
+
+    P7 asks two things of a plan, and the SAME registry answers both by
+    partitioning differently on the image's true casualty type:
+
+      coverage       does the plan mention concepts that APPLY here?
+      contamination  does it mention concepts specific to a DIFFERENT casualty
+                     type? That is a hallucination signal — a plan for an
+                     aground vessel discussing dive teams and depth is
+                     describing a wreck it was never shown.
+
+    The two selections are disjoint by construction, which matters: an
+    assertion counted as both would be rewarded as coverage and penalised as
+    contamination for the same sentence.
+
+    Universal assertions (resources, cross-cutting) apply to every casualty and
+    are therefore NEVER contamination. Counting a tug or a safety briefing as
+    contamination would penalise correct plans.
+    """
+
+    ALL_STATES = {"aground", "capsized", "sunken", "on_fire"}
+    #: Types that apply regardless of casualty — see the class docstring.
+    UNIVERSAL = UNIVERSAL_TYPES
+    #: Registry CSV puts alternative phrasings in one cell, slash-separated.
+    KEYWORD_SEPARATOR = "/"
+
+    def __init__(self, assertions: list):
+        self.assertions = assertions
+
+    @classmethod
+    def load(cls, path: Path = REGISTRY_PATH) -> "AssertionRegistry":
+        """Read the registry CSV, splitting each row's keyword alternatives."""
+        assertions = []
+        with open(path, encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                row["keywords"] = cls.parse_keywords(row["checkable_keyword"])
+                assertions.append(row)
+        return cls(assertions)
+
+    @classmethod
+    def parse_keywords(cls, cell: str) -> list:
+        """Split one CSV cell into lower-cased keyword alternatives."""
+        return [kw.strip().lower()
+                for kw in cell.split(cls.KEYWORD_SEPARATOR)
+                if kw.strip()]
+
+    def relevant(self, gt_state: str) -> list:
+        """Assertions that SHOULD appear: state-specific plus universal."""
+        return [a for a in self.assertions
+                if a["casualty_type"] == gt_state
+                or a["casualty_type"] in self.UNIVERSAL]
+
+    def contaminating(self, gt_state: str) -> list:
+        """Assertions that should NOT appear: those of the other casualties.
+
+        Universal types are excluded deliberately — they are appropriate
+        everywhere, so flagging them would penalise correct plans.
+        """
+        wrong_states = self.ALL_STATES - {gt_state}
+        return [a for a in self.assertions
+                if a["casualty_type"] in wrong_states]
+
+
+class KeywordScanner:
+    """Matches domain keywords in plan text.
+
+    No LLM: the high-discrimination terms in the registry are domain-unique, so
+    a literal match is sufficient evidence the concept was raised.
+
+    Matching is whole-word, which is what stops "tidewater" registering as a
+    tide reference — substring matching would manufacture contamination hits
+    out of ordinary prose.
+
+    Keywords are ESCAPED before use. They come from a CSV and are data, not
+    patterns.
+
+    Limitation: because the pattern is \\b + keyword + \\b, a keyword whose
+    first or last character is non-word (e.g. "c++", "24/7") can never match —
+    there is no word boundary beside punctuation. Every keyword in the current
+    registry starts and ends with a word character, so nothing is affected
+    today, but adding such a keyword would silently disable it.
+    """
+
+    @staticmethod
+    def hit(text: str, keywords: list) -> bool:
+        """True if any keyword appears as a whole word or phrase."""
+        tl = text.lower()
+        for kw in keywords:
+            if re.search(r'\b' + re.escape(kw) + r'\b', tl):
+                return True
+        return False
+
+    @classmethod
+    def scan(cls, plan_text: str, assertions: list) -> tuple:
+        """Return (matching assertion IDs, count)."""
+        hits = [a["id"] for a in assertions if cls.hit(plan_text, a["keywords"])]
+        return hits, len(hits)
+
+
+# ── Compatibility facade ─────────────────────────────────────────────────────
+
 def load_registry(path: Path = REGISTRY_PATH) -> list[dict]:
     """Load assertion registry CSV. Returns list of assertion dicts."""
-    assertions = []
-    with open(path, encoding="utf-8") as f:
-        for row in csv.DictReader(f):
-            row["keywords"] = [
-                kw.strip().lower()
-                for kw in row["checkable_keyword"].split("/")
-                if kw.strip()
-            ]
-            assertions.append(row)
-    return assertions
+    return AssertionRegistry.load(path).assertions
 
 
 def relevant_assertions(assertions: list[dict], gt_state: str) -> list[dict]:
     """Assertions to check for an image: state-specific + universal types."""
-    return [
-        a for a in assertions
-        if a["casualty_type"] == gt_state or a["casualty_type"] in UNIVERSAL_TYPES
-    ]
+    return AssertionRegistry(assertions).relevant(gt_state)
 
 
 def contamination_assertions(assertions: list[dict], gt_state: str) -> list[dict]:
     """Wrong-casualty assertions to scan for contamination (keyword only)."""
-    wrong_states = {"aground", "capsized", "sunken", "on_fire"} - {gt_state}
-    return [a for a in assertions if a["casualty_type"] in wrong_states]
+    return AssertionRegistry(assertions).contaminating(gt_state)
 
-
-# ---------------------------------------------------------------------------
-# Keyword contamination scan (no LLM — high-disc terms are domain-unique)
-# ---------------------------------------------------------------------------
 
 def keyword_hit(text: str, keywords: list[str]) -> bool:
     """True if any keyword appears as a word/phrase in text (case-insensitive)."""
-    tl = text.lower()
-    for kw in keywords:
-        pattern = r'\b' + re.escape(kw) + r'\b'
-        if re.search(pattern, tl):
-            return True
-    return False
+    return KeywordScanner.hit(text, keywords)
 
 
 def scan_contamination(plan_text: str, wrong_assertions: list[dict]) -> tuple[list[str], int]:
     """Return (list of contaminating assertion IDs, count)."""
-    hits = [a["id"] for a in wrong_assertions if keyword_hit(plan_text, a["keywords"])]
-    return hits, len(hits)
+    return KeywordScanner.scan(plan_text, wrong_assertions)
 
 
 # ---------------------------------------------------------------------------
