@@ -67,7 +67,17 @@ def discover_runs(results_dir: Path, filter_names: list = None) -> list:
 
 
 def load_existing_output(out_path: Path) -> set:
-    """Return image paths already successfully extracted (for resume)."""
+    """Return image paths already SUCCESSFULLY extracted, for resume.
+
+    Only records with gemma_parse_ok are counted as done. A record that failed
+    extraction is deliberately NOT included, so a transient Ollama error is
+    retried on the next run rather than being permanently skipped — the file
+    would still contain a line for that image, and a naive "seen this image"
+    check would drop it forever.
+
+    Malformed lines are skipped rather than fatal: a run interrupted mid-write
+    must not prevent resuming.
+    """
     done = set()
     if not out_path.exists():
         return done
