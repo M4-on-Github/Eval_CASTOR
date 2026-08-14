@@ -39,30 +39,89 @@ RESULTS_IN  = EVAL_ROOT.parent / "results" / "castor_results"
 # Discovery
 # ---------------------------------------------------------------------------
 
-def discover_runs(results_dir: Path) -> list:
-    runs = []
-    for path in sorted(results_dir.glob("*.jsonl")):
-        fname     = path.name
-        diffusion = "degf" in path.stem.lower()
-        prompt_style = "direct"
+class RunDiscovery:
+    """Identifies inference runs in a results directory.
+
+    Each run is described by (filename, used_diffusion, prompt_style). Neither
+    of the latter two is recorded in the file — BOTH ARE INFERRED, and getting
+    one wrong does not raise. It silently mislabels a run, and the mislabel
+    propagates into every comparison built from it.
+
+    The heuristics and their limits:
+
+      used_diffusion  substring test on the filename. Any name containing
+                      "degf" counts, so a baseline file named for comparison
+                      ("answers_baseline_vs_degf.jsonl") is mislabelled.
+      prompt_style    regex on the FIRST record's text only. Style is decided
+                      from record one and applied to the whole file, so a run
+                      whose first answer omits the step markers reads as
+                      "direct" even when every later record has them.
+
+    Both are load-bearing for the comparison tables, so they are named methods
+    here rather than inline conditions — the intent is that a wrong label is at
+    least findable.
+    """
+
+    DIFFUSION_MARKER = "degf"
+    #: promptv4.1 and friends structure their answer as "Step 1 — ...".
+    COT_PATTERN = re.compile(r'Step\s*[12]', re.IGNORECASE)
+    DIRECT = "direct"
+    COT = "cot"
+
+    def __init__(self, results_dir: Path):
+        self.results_dir = results_dir
+
+    @classmethod
+    def used_diffusion(cls, path: Path) -> bool:
+        """Whether this run used DeGF, inferred from the filename."""
+        return cls.DIFFUSION_MARKER in path.stem.lower()
+
+    @classmethod
+    def is_cot(cls, text: str) -> bool:
+        return bool(cls.COT_PATTERN.search(text or ""))
+
+    @classmethod
+    def prompt_style(cls, path: Path) -> str:
+        """Infer prompt style from the first record's text.
+
+        Falls back to the slash-n loader for files written with escaped
+        newlines, then to "direct" if the file cannot be read at all — a
+        truncated or empty file must not abort discovery of the rest.
+        """
         try:
             import json
             with open(path, encoding="utf-8") as f:
                 first_rec = json.loads(f.readline())
-            text = first_rec.get("text", "")
-            if re.search(r'Step\s*[12]', text, re.IGNORECASE):
-                prompt_style = "cot"
+            if cls.is_cot(first_rec.get("text", "")):
+                return cls.COT
         except Exception:
             try:
                 from shared.loaders import _load_slash_n_jsonl
                 recs = _load_slash_n_jsonl(path)
-                if recs and re.search(r'Step\s*[12]', recs[0].get("text", ""), re.IGNORECASE):
-                    prompt_style = "cot"
+                if recs and cls.is_cot(recs[0].get("text", "")):
+                    return cls.COT
             except Exception:
                 pass
-        runs.append((fname, diffusion, prompt_style))
-        print(f"  Discovered: {fname}  diffusion={diffusion}  prompt_style={prompt_style}")
-    return runs
+        return cls.DIRECT
+
+    def discover(self) -> list:
+        """Return [(filename, used_diffusion, prompt_style), ...], sorted.
+
+        Sorted so a re-run reports runs in the same order — the tables built
+        downstream are diffed between runs.
+        """
+        runs = []
+        for path in sorted(self.results_dir.glob("*.jsonl")):
+            diffusion = self.used_diffusion(path)
+            style = self.prompt_style(path)
+            runs.append((path.name, diffusion, style))
+            print(f"  Discovered: {path.name}  diffusion={diffusion}  prompt_style={style}")
+        return runs
+
+
+def discover_runs(results_dir: Path) -> list:
+    """Find inference runs. Facade over RunDiscovery; see it for the heuristics."""
+    return RunDiscovery(results_dir).discover()
 
 
 # ---------------------------------------------------------------------------
