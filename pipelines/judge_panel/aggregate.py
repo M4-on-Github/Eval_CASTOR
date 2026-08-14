@@ -29,7 +29,15 @@ FIELD_KEYS = ["state_correct", "vessel_type_correct", "size_correct", "cargo_cor
 
 def _record_id(rec: dict) -> str:
     """Stable composite key: image||model_tag||method||prompt_stem.
-    Falls back to image alone for old records that lack the extra fields."""
+
+    Keying on image alone would be wrong: one image appears once per
+    (model, method, prompt) combination and each needs its own verdict, so a
+    bare-image key would keep only the last and silently discard the rest.
+
+    Missing fields become empty SEGMENTS, not a shorter key — an old record
+    lacking the extra fields keys as "image||||||", which will not match a
+    lookup by bare image path. There is no fallback to image alone.
+    """
     img  = rec.get("image", "")
     mt   = rec.get("model_tag", "")
     meth = rec.get("method", "")
@@ -54,6 +62,86 @@ def load_judge_jsonl(path: Path) -> dict:
     return result
 
 
+class PanelVote:
+    """Turns three judge models' opinions into one verdict.
+
+    Everything downstream is computed from these records — summary.csv
+    accuracies, per-image tiers, the regex-judge kappa — so the thresholds here
+    move every judged number in the project.
+
+    Three decisions are encoded, and each distinguishes cases that look alike:
+
+    NO SCORE IS NOT A LOW SCORE. When every judge fails to parse, mean_score is
+    None and the verdict is "no_score", never "inaccurate". Collapsing them
+    would count a formatting failure as a model error and quietly depress the
+    reported accuracy.
+
+    DISAGREEMENT IS REPORTED, NOT RESOLVED. A standard deviation above
+    STD_FLAG_THRESHOLD marks the record "flagged_for_review" rather than
+    discarding it or picking a winner. The panel disagreeing IS the finding on
+    contested images.
+
+    A TIED FIELD VOTE MEANS "NOT ESTABLISHED". The majority threshold is
+    len/2 + 0.5, so 1-of-2 does not carry. A field no judge could assess is
+    None, which is distinct from False — conflating them would count
+    unassessable fields as failures.
+    """
+
+    #: mean score at or above this counts as accurate (scores are 1-3)
+    ACCURATE_THRESHOLD = 2.5
+
+    def __init__(self, scores: dict, std_flag_threshold: float = None):
+        self.scores = scores
+        self.std_flag_threshold = (STD_FLAG_THRESHOLD if std_flag_threshold is None
+                                   else std_flag_threshold)
+
+    @property
+    def valid_scores(self) -> list:
+        """Scores from judges that actually parsed."""
+        return [s for s in self.scores.values() if s is not None]
+
+    @property
+    def all_failed(self) -> bool:
+        return not self.valid_scores
+
+    def summarise(self) -> tuple:
+        """Return (mean_score, score_std, consensus_status, judge_verdict)."""
+        valid = self.valid_scores
+        if not valid:
+            return None, None, "parse_error", "no_score"
+
+        mean_score = round(mean(valid), 3)
+        # stdev() of a single sample raises, so one surviving judge is
+        # reported as zero spread rather than as an error.
+        score_std = round(stdev(valid), 3) if len(valid) > 1 else 0.0
+        status = ("flagged_for_review" if score_std > self.std_flag_threshold
+                  else "consensus")
+        verdict = "accurate" if mean_score >= self.ACCURATE_THRESHOLD else "inaccurate"
+        return mean_score, score_std, status, verdict
+
+    @staticmethod
+    def union_hallucinations(hallucinations: dict) -> list:
+        """Every distinct hallucination any judge reported.
+
+        Union rather than intersection: one judge spotting a fabricated detail
+        is evidence it is there, and requiring agreement would discard most
+        findings.
+        """
+        return list({
+            h
+            for model_hallus in hallucinations.values()
+            for h in (model_hallus or [])
+        })
+
+    @classmethod
+    def field_majority(cls, votes: dict) -> Optional[bool]:
+        """Majority verdict for one field, or None if no judge assessed it."""
+        cast = [v for v in votes.values() if v is not None]
+        if not cast:
+            return None
+        return sum(1 for v in cast if v) >= (len(cast) / 2 + 0.5)
+
+
 def compute_consensus(image: str, gt_state: str, pred_text: str,
                       verbosity_flagged: bool,
                       scores: dict, rationales: dict,
@@ -69,36 +157,19 @@ def compute_consensus(image: str, gt_state: str, pred_text: str,
         hallucinations: {model -> [str, ...]}
         field_votes: {field_key -> {model -> bool_or_None}}
 
-    Returns a consensus record dict.
+    Returns a consensus record dict. See PanelVote for the thresholds and why
+    each distinguishes the cases it does.
     """
-    valid = [s for s in scores.values() if s is not None]
+    vote = PanelVote(scores)
+    mean_score, score_std, status, verdict = vote.summarise()
 
-    if not valid:
-        mean_score = None
-        score_std  = None
-        status     = "parse_error"
-        verdict    = "no_score"
-    else:
-        mean_score = round(mean(valid), 3)
-        score_std  = round(stdev(valid), 3) if len(valid) > 1 else 0.0
-        status     = "flagged_for_review" if score_std > STD_FLAG_THRESHOLD else "consensus"
-        verdict    = "accurate" if mean_score >= 2.5 else "inaccurate"
-
-    hallucination_union = list({
-        h
-        for model_hallus in hallucinations.values()
-        for h in (model_hallus or [])
-    })
+    hallucination_union = vote.union_hallucinations(hallucinations)
 
     # Per-field majority vote: True if ≥ ceil(n/2 + 1) judges voted True
     field_consensus = {}
     if field_votes:
         for fk in FIELD_KEYS:
-            votes = [v for v in field_votes.get(fk, {}).values() if v is not None]
-            if votes:
-                field_consensus[fk] = sum(1 for v in votes if v) >= (len(votes) / 2 + 0.5)
-            else:
-                field_consensus[fk] = None
+            field_consensus[fk] = PanelVote.field_majority(field_votes.get(fk, {}))
 
     rec = {
         "record_id":           f"{image}||{model_tag}||{method}||{prompt_stem}",
