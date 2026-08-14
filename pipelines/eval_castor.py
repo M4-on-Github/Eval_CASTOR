@@ -24,7 +24,8 @@ import pandas as pd
 EVAL_ROOT   = Path(__file__).parent.parent          # Eval_CASTOR/
 sys.path.insert(0, str(EVAL_ROOT))
 
-from shared.loaders  import load_ground_truth, load_run, load_pre_parsed, _safe_str
+from shared.loaders  import (load_ground_truth, load_run, load_pre_parsed, _safe_str,
+                             used_diffusion as _shared_used_diffusion)
 from shared.metrics  import (
     VALID_STATES, extract_json_block, normalize_state, extract_q_answers,
     normalize_size, vessel_jaccard, cargo_match, gemma_val,
@@ -62,7 +63,6 @@ class RunDiscovery:
     least findable.
     """
 
-    DIFFUSION_MARKER = "degf"
     #: promptv4.1 and friends structure their answer as "Step 1 — ...".
     COT_PATTERN = re.compile(r'Step\s*[12]', re.IGNORECASE)
     DIRECT = "direct"
@@ -71,10 +71,15 @@ class RunDiscovery:
     def __init__(self, results_dir: Path):
         self.results_dir = results_dir
 
-    @classmethod
-    def used_diffusion(cls, path: Path) -> bool:
-        """Whether this run used DeGF, inferred from the filename."""
-        return cls.DIFFUSION_MARKER in path.stem.lower()
+    @staticmethod
+    def used_diffusion(path: Path) -> bool:
+        """Whether this run used DeGF, inferred from the filename.
+
+        Delegates to shared.loaders so eval_separated.py, which walks
+        directories rather than files, applies the identical rule. If the two
+        ever disagreed their comparison tables would disagree with no error.
+        """
+        return _shared_used_diffusion(path.stem)
 
     @classmethod
     def is_cot(cls, text: str) -> bool:

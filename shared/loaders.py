@@ -115,3 +115,25 @@ def read_jsonl(path: Path):
                     yield json.loads(line)
                 except json.JSONDecodeError:
                     pass
+
+
+# ---------------------------------------------------------------------------
+# Run identification
+# ---------------------------------------------------------------------------
+
+#: Substring marking a DeGF run. Both eval_castor.py (which globs files) and
+#: eval_separated.py (which walks directories) infer the decoding method from
+#: the name, and they MUST agree — if one counted a run as diffusion and the
+#: other did not, their comparison tables would disagree with no error anywhere.
+DIFFUSION_MARKER = "degf"
+
+
+def used_diffusion(name: str) -> bool:
+    """Whether a run used DeGF, inferred from its file or directory name.
+
+    A heuristic, not a recorded fact. It is a plain substring test, so ANY name
+    containing "degf" counts — a baseline file named for comparison
+    ("answers_baseline_vs_degf.jsonl") is mislabelled as a diffusion run. The
+    inference cannot fail loudly; it can only be wrong.
+    """
+    return DIFFUSION_MARKER in name.lower()

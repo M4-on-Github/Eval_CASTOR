@@ -22,7 +22,7 @@ import pandas as pd
 EVAL_ROOT   = Path(__file__).parent.parent
 sys.path.insert(0, str(EVAL_ROOT))
 
-from shared.loaders import load_ground_truth
+from shared.loaders import load_ground_truth, used_diffusion
 from shared.metrics import (
     VALID_STATES, normalize_state, normalize_size,
     vessel_jaccard, cargo_match, per_state_report, confusion_matrix_report, summary_row,
@@ -37,21 +37,49 @@ OUT_DIR     = EVAL_ROOT / "results" / "p4_separated"
 # Discovery
 # ---------------------------------------------------------------------------
 
+class SeparatedRunDiscovery:
+    """Finds separated-field runs, which are DIRECTORIES rather than files.
+
+    P4 evaluates the multi-turn prompt format, where each field is asked as its
+    own question, so one run is a directory of per-field JSONL files instead of
+    a single answers file. That is why this discovery differs from P1's.
+
+    Both accepted prefixes are load-bearing. Early runs were written with a
+    misspelling ("separeted_"), and those directories still exist in the
+    results tree — dropping the typo would silently make historical runs
+    invisible rather than raising, so the tolerance is kept deliberately.
+    """
+
+    #: Correct spelling, then the historical misspelling. Order is cosmetic.
+    PREFIXES = ("separated_into_parts_", "separeted_into_parts_")
+
+    def __init__(self, results_dir: Path):
+        self.results_dir = results_dir
+
+    @classmethod
+    def is_run_dir(cls, path: Path) -> bool:
+        return path.is_dir() and path.name.startswith(cls.PREFIXES)
+
+    def discover(self) -> list:
+        """Return [(dir_path, dir_name, used_diffusion), ...], sorted."""
+        if not self.results_dir.exists():
+            print(f"  Directory not found: {self.results_dir}")
+            return []
+        runs = []
+        for subdir in sorted(self.results_dir.iterdir()):
+            if self.is_run_dir(subdir):
+                # Shared with eval_castor.py so both pipelines classify a run
+                # the same way; a disagreement would not raise, it would just
+                # make their tables inconsistent.
+                diffusion = used_diffusion(subdir.name)
+                runs.append((subdir, subdir.name, diffusion))
+                print(f"  Discovered: {subdir.name}  diffusion={diffusion}")
+        return runs
+
+
 def discover_runs(results_dir: Path) -> list:
-    if not results_dir.exists():
-        print(f"  Directory not found: {results_dir}")
-        return []
-    runs = []
-    for subdir in sorted(results_dir.iterdir()):
-        # Accept both correct spelling and the historical typo ("separeted_")
-        if subdir.is_dir() and (
-            subdir.name.startswith("separated_into_parts_") or
-            subdir.name.startswith("separeted_into_parts_")
-        ):
-            diffusion = "degf" in subdir.name.lower()
-            runs.append((subdir, subdir.name, diffusion))
-            print(f"  Discovered: {subdir.name}  diffusion={diffusion}")
-    return runs
+    """Find separated-field runs. Facade over SeparatedRunDiscovery."""
+    return SeparatedRunDiscovery(results_dir).discover()
 
 
 # ---------------------------------------------------------------------------
