@@ -87,8 +87,36 @@ def _fleiss_kappa(per_step_rows: list[dict]) -> float | None:
     return round((P_bar - P_e) / (1 - P_e), 4)
 
 
+class PanelReliability:
+    """Diagnostics on the coherence judges themselves, not on the plans.
+
+    Two numbers per judge, answering different questions:
+
+      invalid_rate        how harshly this judge marks steps. A judge far
+                          above or below its peers is applying a different
+                          standard, and its votes carry into every majority.
+      majority_agreement  how often it sides with the panel. A judge agreeing
+                          rarely is either uniquely perceptive or broken, and
+                          the two look identical from the numbers alone.
+
+    Read alongside Fleiss' kappa: kappa says whether the panel agrees overall,
+    these say WHICH judge is responsible when it does not.
+
+    Both are None when a judge rated nothing — distinct from 0.0, which would
+    mean it rated steps and never marked one invalid.
+
+    Steps a judge did not rate are skipped rather than counted either way.
+    Treating an unrated step as agreement would flatter a judge that errored
+    frequently; treating it as disagreement would penalise it for the harness
+    failing.
+    """
+
+
 def _judge_stats(per_step_rows: list[dict]) -> dict[str, dict]:
-    """Per-judge invalid rate and fraction of steps agreeing with majority vote."""
+    """Per-judge invalid rate and fraction of steps agreeing with majority vote.
+
+    See PanelReliability for how to read the two numbers.
+    """
     stats = {}
     for model in JUDGE_MODELS:
         invalid_flags, agree_flags = [], []

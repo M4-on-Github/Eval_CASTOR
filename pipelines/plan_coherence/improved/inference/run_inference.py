@@ -52,39 +52,102 @@ except ImportError:
 # helpers
 # ---------------------------------------------------------------------------
 
+class ImageSet:
+    """Walks the CASTOR image tree, taking ground truth from the directory.
+
+    Each image's casualty state IS its parent directory name — there is no
+    separate label file at this stage. That is why the state list is fixed
+    rather than discovered: a stray directory would otherwise become a fifth
+    casualty class, and a renamed one would silently drop its images from the
+    run with no error.
+
+    Records carry both a relative `image` and an `abs_path`. The relative form
+    is the join key against human_gt.csv and must stay forward-slashed and
+    stable; the absolute is what the model actually opens. Collapsing them into
+    one field has broken the join before.
+    """
+
+    #: Fixed, not discovered — see the class docstring.
+    STATES = ["aground", "capsized", "sunken", "on_fire"]
+    EXTENSIONS = {".jpg", ".jpeg", ".png"}
+
+    @classmethod
+    def gather(cls, images_dir: Path) -> list:
+        """Return one record per image, in state then filename order.
+
+        Sorted so question_ids are stable between runs — they are positional
+        in the output and a reordering would break comparison against earlier
+        results. A missing state directory is skipped rather than fatal, since
+        a subset run may legitimately contain only some classes.
+        """
+        records = []
+        for state in cls.STATES:
+            state_path = images_dir / state
+            if not state_path.is_dir():
+                continue
+            imgs = sorted(p for p in state_path.iterdir()
+                          if p.suffix.lower() in cls.EXTENSIONS)
+            for img in imgs:
+                records.append({
+                    "question_id": f"{state}/{img.name}",
+                    "image": str(img.relative_to(images_dir)),
+                    "abs_path": str(img),
+                    "gt_state": state,
+                })
+        return records
+
+
+class PipelineConfig:
+    """Loads P8+'s config.yaml and expands the variables inside it.
+
+    Paths in the config carry ${USER} / ${HOME} rather than being baked in, so
+    one file works for any account on the cluster. Expansion happens at read
+    time, which is why a path that looks wrong in the YAML may still be right
+    at runtime — and why an UNSET variable expands to nothing rather than
+    raising, producing a path with a hole in it that fails much later as a
+    missing file.
+    """
+
+    @staticmethod
+    def load(path: str) -> dict:
+        with open(path) as f:
+            return yaml.safe_load(f)
+
+    @staticmethod
+    def expand(s: str) -> str:
+        """Expand ${USER}, ${HOME}, $USER, $HOME in a path string."""
+        return os.path.expandvars(s)
+
+    @staticmethod
+    def prompt(prompts_dir: Path, condition: str) -> str:
+        """Read the prompt for one experimental condition.
+
+        Condition names the file: prompt_{condition}.txt. The conditions are
+        the ablation arms (standard / control / ablation), so a typo here
+        reads a different arm's prompt rather than failing.
+        """
+        p = prompts_dir / f"prompt_{condition}.txt"
+        return p.read_text().strip()
+
+
+# ── Compatibility facade ─────────────────────────────────────────────────────
+
 def load_config(path: str) -> dict:
-    with open(path) as f:
-        return yaml.safe_load(f)
+    return PipelineConfig.load(path)
 
 
 def expand(s: str) -> str:
     """Expand ${USER}, ${HOME}, $USER, $HOME in a path string."""
-    return os.path.expandvars(s)
+    return PipelineConfig.expand(s)
 
 
 def load_prompt(prompts_dir: Path, condition: str) -> str:
-    p = prompts_dir / f"prompt_{condition}.txt"
-    return p.read_text().strip()
+    return PipelineConfig.prompt(prompts_dir, condition)
 
 
 def gather_images(images_dir: Path) -> list[dict]:
     """Walk images_dir, return list of {image_path, gt_state, question_id}."""
-    state_dirs = ["aground", "capsized", "sunken", "on_fire"]
-    records = []
-    for state in state_dirs:
-        state_path = images_dir / state
-        if not state_path.is_dir():
-            continue
-        _EXTS = {".jpg", ".jpeg", ".png"}
-        imgs = sorted(p for p in state_path.iterdir() if p.suffix.lower() in _EXTS)
-        for img in imgs:
-            records.append({
-                "question_id": f"{state}/{img.name}",
-                "image": str(img.relative_to(images_dir)),
-                "abs_path": str(img),
-                "gt_state": state,
-            })
-    return records
+    return ImageSet.gather(images_dir)
 
 
 # ---------------------------------------------------------------------------

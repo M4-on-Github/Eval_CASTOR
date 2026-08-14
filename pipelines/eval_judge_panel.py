@@ -34,6 +34,21 @@ RESULTS_IN = EVAL_ROOT.parent / "results" / "castor_results"
 OUT_BASE   = EVAL_ROOT / "results" / "p5_judge"
 
 
+class JudgePanelRun:
+    """Orchestrates P5: three judges sequentially, then aggregation.
+
+    SEQUENTIAL, not parallel, and that is a hardware constraint rather than a
+    preference. Each judge is a 30B+ model loaded into vLLM; two at once will
+    not fit on the allocated GPUs, so they run one after another and the wall
+    time is the sum, not the max.
+
+    Aggregation is a separate step chained after all three, because consensus
+    needs every judge's verdict on a record before it can compute a mean or a
+    standard deviation. A judge failing therefore does not merely lose its own
+    column — it changes the consensus for every record it was meant to score.
+    """
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="Pipeline 5: run all three judges sequentially + aggregate."

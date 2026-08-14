@@ -14,6 +14,24 @@ import sys
 from pathlib import Path
 
 
+class AWQQuantization:
+    """4-bit AWQ quantization, run once per judge model before P5 can use it.
+
+    The judge panel loads three 30B+ models. At FP16 they do not fit on the
+    allocated GPUs, so each is quantized to 4-bit first — that is what makes a
+    three-model panel possible on one node at all.
+
+    A non-empty destination is SKIPPED rather than overwritten. Quantization
+    takes tens of minutes and is deterministic, so re-doing it wastes an
+    allocation; more importantly, overwriting mid-run would corrupt weights a
+    running job has memory-mapped.
+
+    group_size 128 is AutoAWQ's default and the value the judge configs assume.
+    Changing it changes the weights, so a model quantized at a different size
+    is not interchangeable with one already on disk.
+    """
+
+
 def main():
     ap = argparse.ArgumentParser(description="AutoAWQ 4-bit quantization.")
     ap.add_argument("--src", required=True, type=Path,

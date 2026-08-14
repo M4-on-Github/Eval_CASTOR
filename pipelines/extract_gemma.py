@@ -57,7 +57,24 @@ TEXT:
 {text}"""
 
 
+class ExtractionRuns:
+    """Selects which inference files P2 sends to Gemma for field extraction.
+
+    Separate from P1's discovery because the question differs: P1 asks what
+    runs EXIST, while P2 asks which to spend Ollama calls on. Extraction is
+    the slow, billable step, so `filter_names` exists to re-run one file
+    without re-extracting the rest.
+
+    An EMPTY filter list is treated as no filter, not as "nothing". The check
+    is `if filter_names and ...`, so [] is falsy and everything passes. That is
+    the useful default for a caller building a list conditionally, but it means
+    an accidentally-empty filter processes the whole directory rather than
+    doing nothing.
+    """
+
+
 def discover_runs(results_dir: Path, filter_names: list = None) -> list:
+    """Inference files to extract from, optionally filtered. See ExtractionRuns."""
     runs = []
     for path in sorted(results_dir.glob("*.jsonl")):
         if filter_names and path.name not in filter_names:
