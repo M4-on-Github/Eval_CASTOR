@@ -140,24 +140,56 @@ _SYSTEM_PROMPT = (
 )
 
 
+class CoherencePromptBuilder:
+    """Builds the per-step prompt for the coherence judge.
+
+    Each step is judged SEPARATELY, with the steps before it supplied as
+    context. That structure is the point of the pipeline: coherence is not a
+    property of a step in isolation but of its position. "Pump out the
+    flooded compartments" is valid on its own and wrong before "seal the
+    hull breach", and only the prior-steps context makes that visible.
+
+    The judge is asked two questions at once — is the step operationally
+    valid, and is it correctly sequenced — collapsing to one boolean. A step
+    marked invalid may have failed either test, so the reason string is the
+    only way to tell which. Worth remembering before reading an invalid count
+    as a sequencing finding.
+
+    Prompts grow with step position: step 7 carries six prior steps. Long
+    plans therefore approach the model's context limit near their end, which
+    is where max_model_len in _MODEL_CONFIG is spent.
+    """
+
+    @staticmethod
+    def build(gt_state: str, prior_steps: list, step_num: int, step_text: str) -> str:
+        """Prompt asking whether one step is valid and correctly sequenced.
+
+        `prior_steps` is [(num, text), ...] for the steps before this one, in
+        plan order. Empty for the first step, which is judged on validity
+        alone since it has no sequencing context.
+        """
+        parts = [f"CASUALTY TYPE: {gt_state}\n"]
+        if prior_steps:
+            parts.append("STEPS COMPLETED SO FAR:")
+            for num, text in prior_steps:
+                parts.append(f"  {num}. {text}")
+            parts.append("")
+        parts.append("STEP TO EVALUATE:")
+        parts.append(f"  {step_num}. {step_text}")
+        parts.append("")
+        parts.append(
+            f'Is this step (a) operationally valid for maritime salvage of a '
+            f'"{gt_state}" casualty, and (b) correctly sequenced given the prior steps?\n'
+            f'Respond: {{"valid": true, "reason": "one sentence"}} or '
+            f'{{"valid": false, "reason": "one sentence"}}'
+        )
+        return "\n".join(parts)
+
+
 def _user_prompt(gt_state: str, prior_steps: list[tuple[int, str]],
                  step_num: int, step_text: str) -> str:
-    parts = [f"CASUALTY TYPE: {gt_state}\n"]
-    if prior_steps:
-        parts.append("STEPS COMPLETED SO FAR:")
-        for num, text in prior_steps:
-            parts.append(f"  {num}. {text}")
-        parts.append("")
-    parts.append("STEP TO EVALUATE:")
-    parts.append(f"  {step_num}. {step_text}")
-    parts.append("")
-    parts.append(
-        f'Is this step (a) operationally valid for maritime salvage of a '
-        f'"{gt_state}" casualty, and (b) correctly sequenced given the prior steps?\n'
-        f'Respond: {{"valid": true, "reason": "one sentence"}} or '
-        f'{{"valid": false, "reason": "one sentence"}}'
-    )
-    return "\n".join(parts)
+    """Per-step coherence prompt. Facade over CoherencePromptBuilder."""
+    return CoherencePromptBuilder.build(gt_state, prior_steps, step_num, step_text)
 
 
 # ---------------------------------------------------------------------------

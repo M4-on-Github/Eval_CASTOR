@@ -43,13 +43,51 @@ SIGNIFICANCE_THRESHOLD = 0.05
 # Public helpers (tested directly)
 # ---------------------------------------------------------------------------
 
+class ElementStateTests:
+    """Fisher's exact tests for element-to-state association.
+
+    Asks, for each salvage element, whether it appears disproportionately in
+    plans for one casualty state. An element that does NOT is boilerplate the
+    model reaches for regardless of what it thinks it is looking at — which is
+    the templating finding P6 exists to produce.
+
+    Fisher's exact rather than chi-squared because the contingency cells are
+    small: with roughly 110 images split four ways and elements that may appear
+    a handful of times, chi-squared's large-sample approximation does not hold
+    and would report significance that is not there.
+
+    TWO TRACKS, RUN SEPARATELY. Every element is tested against the model's
+    PREDICTED state and against the GROUND TRUTH state. They answer different
+    questions — does the plan template on what the model believes, or on what
+    is actually true — and are reported as independent findings rather than
+    combined. Predicted and gt agree only 21-46% of the time on real runs, so
+    treating them as one claim would be wrong.
+
+    One-vs-rest: each state is tested against all others pooled, so the states
+    are mutually exclusive groups rather than a single omnibus comparison.
+
+    Raw prevalence counts are recorded alongside the p-values, deliberately.
+    Significance answers "is this association real"; prevalence answers "how
+    often does this actually appear", and a reader needs both — a significant
+    element occurring three times is a different finding from one occurring
+    forty.
+    """
+
+    #: (label, dataframe column) for each track — see the class docstring.
+    TRACKS = [("predicted", "predicted_state"), ("gt", "gt_state")]
+
+
 def run_all_fisher_tests(df: pd.DataFrame, elements: list) -> list:
     """One ElementStateTest per (element, state, source) combination, source
     in {"predicted", "gt"}, one-vs-rest. Also records raw prevalence counts
     (independent of the comparative Fisher's test) so a reader can answer
-    "how often does this actually appear in this state" directly."""
+    "how often does this actually appear in this state" directly.
+
+    See ElementStateTests for why Fisher's exact, why two tracks, and why
+    prevalence is kept alongside significance.
+    """
     tests = []
-    for source, state_col in [("predicted", "predicted_state"), ("gt", "gt_state")]:
+    for source, state_col in ElementStateTests.TRACKS:
         for state_value in sorted(df[state_col].dropna().unique()):
             in_state = (df[state_col] == state_value).tolist()
             n_in_state = sum(in_state)
