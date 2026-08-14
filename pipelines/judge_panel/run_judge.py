@@ -70,19 +70,50 @@ def build_user_prompt(gt_fields: dict, pred_text: str) -> str:
     )
 
 
-def parse_judge_response(raw: str) -> dict:
-    """Parse a judge model's raw text response into structured fields.
+class JudgeResponseParser:
+    """Recovers structured fields from a judge model's free-form reply.
 
-    Returns a dict with keys: score, rationale, hallucinations, parse_ok,
-    and optionally raw_response on failure.
+    The panel runs three different models and each misbehaves differently, so
+    the reply is cleaned through a fixed sequence before any JSON is attempted:
+
+      1. <think>...</think>   DeepSeek-R1 reasons aloud before answering
+      2. unclosed <think>     the reply was TRUNCATED mid-reasoning; strip to
+                              end, which correctly leaves nothing parseable
+      3. markdown fences      several models wrap JSON in ```json blocks
+      4. LaTeX escapes        some emit final\\_score rather than final_score
+
+    Then three parse attempts, weakest assumption last:
+
+      strict JSON  ->  strict=False (tolerates raw newlines in strings)
+                   ->  extract the outermost {...} and retry
+
+    The last is what rescues replies with prose around the JSON.
+
+    ON FAILURE, THE RAW TEXT IS PRESERVED (capped at 500 chars). That field is
+    the only evidence of WHY a record failed, and it is what identified the
+    truncation problem in this project: judges were hitting max_tokens
+    mid-object, leaving JSON with no closing brace. Parse rates were ~50% for
+    DeepSeek and ~33% for Selene until their limits were raised.
     """
-    cleaned = _THINK_RE.sub('', raw).strip()
-    cleaned = _THINK_OPEN_RE.sub('', cleaned).strip()
-    cleaned = _FENCE_RE.sub('', cleaned)
-    cleaned = _FENCE_END_RE.sub('', cleaned).strip()
-    cleaned = _LATEX_RE.sub(r'\1', cleaned)
 
-    def _try_parse(s: str):
+    RAW_EXCERPT_CHARS = 500
+
+    @staticmethod
+    def clean(raw: str) -> str:
+        """Strip reasoning blocks, code fences and escape artefacts."""
+        cleaned = _THINK_RE.sub('', raw).strip()
+        cleaned = _THINK_OPEN_RE.sub('', cleaned).strip()
+        cleaned = _FENCE_RE.sub('', cleaned)
+        cleaned = _FENCE_END_RE.sub('', cleaned).strip()
+        return _LATEX_RE.sub(r'\1', cleaned)
+
+    @staticmethod
+    def try_json(s: str):
+        """json.loads, retrying non-strict. Returns None if unparseable.
+
+        The strict=False retry tolerates raw newlines inside strings, which
+        judges produce routinely in a multi-line rationale.
+        """
         try:
             return json.loads(s)
         except json.JSONDecodeError:
@@ -91,12 +122,29 @@ def parse_judge_response(raw: str) -> dict:
             except json.JSONDecodeError:
                 return None
 
-    data = _try_parse(cleaned)
-    if data is None:
-        # Model output has preamble/trailing text — extract the first {...} block.
-        m = _JSON_OBJECT_RE.search(cleaned)
-        if m:
-            data = _try_parse(m.group(0))
+    @classmethod
+    def extract(cls, cleaned: str):
+        """Parse `cleaned`, falling back to the outermost {...} block."""
+        data = cls.try_json(cleaned)
+        if data is None:
+            # Model output has preamble/trailing text — extract the {...} block.
+            m = _JSON_OBJECT_RE.search(cleaned)
+            if m:
+                data = cls.try_json(m.group(0))
+        return data
+
+
+def parse_judge_response(raw: str) -> dict:
+    """Parse a judge model's raw text response into structured fields.
+
+    Returns a dict with keys: score, rationale, hallucinations, parse_ok,
+    and optionally raw_response on failure.
+
+    See JudgeResponseParser for the cleanup sequence and why the raw text is
+    retained on failure.
+    """
+    cleaned = JudgeResponseParser.clean(raw)
+    data = JudgeResponseParser.extract(cleaned)
     if data is None:
         return {
             "score": None, "rationale": "", "hallucinations": [],
