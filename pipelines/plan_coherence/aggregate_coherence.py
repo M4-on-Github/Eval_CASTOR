@@ -30,6 +30,11 @@ JUDGE_MODELS = [
     "gemma4_31b",
 ]
 
+#: A step is marked invalid when this many judges say so. With five
+#: judges that is a BARE MAJORITY, not unanimity — two judges can
+#: dissent and the step is still counted bad. Note this panel is larger
+#: than P5's three-model one, so a threshold of 3 means something
+#: different in each pipeline.
 MAJORITY_THRESHOLD = 3  # n_invalid >= this → majority_invalid = True
 
 
