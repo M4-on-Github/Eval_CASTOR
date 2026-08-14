@@ -128,38 +128,89 @@ def build_extract_prompt(recovery_text: str) -> str:
     return _USER_TEMPLATE.format(recovery_text=recovery_text)
 
 
+class ElementResponseParser:
+    """Recovers the extracted element list from an LLM's raw reply.
+
+    Stage 1 asks a model to list the discrete actions in a salvage plan. The
+    reply arrives with several layers of noise depending on backend and model:
+
+      <think>...</think>   reasoning models narrate before answering
+      ```json fences       markdown wrapping
+      Ġ                    a byte-level BPE space marker. GPT-2-style
+                           tokenizers use U+0120 for a leading space, and it
+                           occasionally survives detokenisation into the
+                           output. Left in place it corrupts every phrase,
+                           and the corrupted phrasings would then cluster as
+                           distinct elements in Stage 2.
+
+    Then JSON is attempted whole, and if that fails the outermost {...} is
+    extracted and retried — which rescues replies with prose around the object.
+
+    NEVER RAISES. Stage 1 runs over every image in a run and one malformed
+    reply must not abort the batch; a failure is recorded as parse_ok=False and
+    retried on the next run.
+    """
+
+    #: Byte-level BPE space marker — see the class docstring.
+    BPE_SPACE = 'Ġ'
+
+    @classmethod
+    def clean(cls, raw: str) -> str:
+        """Strip tokeniser artefacts, reasoning blocks and code fences."""
+        raw = raw.replace(cls.BPE_SPACE, ' ')
+        cleaned = _THINK_RE.sub('', raw).strip()
+        cleaned = _FENCE_RE.sub('', cleaned)
+        return _FENCE_END_RE.sub('', cleaned).strip()
+
+    @classmethod
+    def parse(cls, raw: str):
+        """Return the parsed object, or None. Never raises."""
+        if not raw:
+            return None
+        cleaned = cls.clean(raw)
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            pass
+        m = _JSON_OBJECT_RE.search(cleaned)
+        if m:
+            try:
+                return json.loads(m.group(0))
+            except json.JSONDecodeError:
+                return None
+        return None
+
+    @staticmethod
+    def to_result(parsed) -> dict:
+        """Normalise into {elements, parse_ok}.
+
+        A reply whose "elements" is not a list counts as a PARSE FAILURE, not
+        as zero elements. The distinction matters downstream: an empty list
+        means the model found no actions in the plan, while a failure means we
+        do not know — and averaging the two together would understate how often
+        extraction actually worked.
+        """
+        if parsed is None:
+            return {"elements": [], "parse_ok": False}
+        elements = parsed.get("elements")
+        if not isinstance(elements, list):
+            return {"elements": [], "parse_ok": False}
+        return {"elements": [str(e) for e in elements], "parse_ok": True}
+
+
+# ── Compatibility facade ─────────────────────────────────────────────────────
+
 def clean_and_parse_json(raw: str):
     """Strip <think> blocks, code fences, and stray byte-level BPE space
     markers from a raw LLM response and parse the JSON object inside.
     Returns None (never raises) if nothing parses."""
-    if not raw:
-        return None
-    raw = raw.replace('Ġ', ' ')
-    cleaned = _THINK_RE.sub('', raw).strip()
-    cleaned = _FENCE_RE.sub('', cleaned)
-    cleaned = _FENCE_END_RE.sub('', cleaned).strip()
-    try:
-        return json.loads(cleaned)
-    except json.JSONDecodeError:
-        pass
-    m = _JSON_OBJECT_RE.search(cleaned)
-    if m:
-        try:
-            return json.loads(m.group(0))
-        except json.JSONDecodeError:
-            return None
-    return None
+    return ElementResponseParser.parse(raw)
 
 
 def parse_extract_result(parsed: dict) -> dict:
     """Normalize a parsed response dict (or None on failure) into
     {elements: list[str], parse_ok: bool}."""
-    if parsed is None:
-        return {"elements": [], "parse_ok": False}
-    elements = parsed.get("elements")
-    if not isinstance(elements, list):
-        return {"elements": [], "parse_ok": False}
-    return {"elements": [str(e) for e in elements], "parse_ok": True}
+    return ElementResponseParser.to_result(parsed)
 
 
 _RAW_RESPONSE_MAX_CHARS = 2000

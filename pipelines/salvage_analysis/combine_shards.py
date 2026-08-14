@@ -59,38 +59,84 @@ def discover_run_names(directory: Path) -> list:
     return sorted(path.stem for path in directory.glob("*.jsonl"))
 
 
+class ShardCombiner:
+    """Rejoins the separated-field prompt format into one record per image.
+
+    The multi-turn variant asks each field as its own question, so one run
+    produces up to seven files — question 1 is state, question 7 is the
+    recovery plan — each holding that field's answer for every image. This
+    class puts them back together.
+
+    Files are grouped by (base name, job id), so two runs of the same prompt
+    set under different SLURM jobs stay separate. Grouping on base name alone
+    would silently interleave two experiments into one record set.
+    """
+
+    #: e.g. answers_qwen_3_size_j12345.jsonl -> base, question number, field, job
+    SHARD_RE = SHARD_RE
+    #: Question number to the field it asked about.
+    FIELD_KEY = FIELD_KEY
+
+    @classmethod
+    def group_shards(cls, directory: Path) -> dict:
+        """Return {run_key: {field_key: Path}} for every shard group found.
+
+        Files not matching the naming convention are ignored rather than
+        rejected — the directory also holds ordinary single-file runs.
+        """
+        groups = {}
+        for path in sorted(Path(directory).glob("*.jsonl")):
+            m = cls.SHARD_RE.match(path.name)
+            if not m:
+                continue
+            run_key = f"{m.group('base')}_j{m.group('job')}"
+            field_key = cls.FIELD_KEY[m.group("num")]
+            groups.setdefault(run_key, {})[field_key] = path
+        return groups
+
+    @staticmethod
+    def merge(run_key: str, field_files: dict) -> list:
+        """Join the field shards into one record per image.
+
+        Records are keyed by image and emitted in FIRST-SEEN order rather than
+        sorted, so the combined file follows the order of whichever field was
+        processed first. That keeps the output stable across re-runs of the
+        same inputs.
+
+        A shard missing an image simply leaves that field absent from the
+        record — it is not an error. Fields are asked as separate jobs and one
+        can fail or be re-run independently, so requiring all seven to agree on
+        their image list would discard every record over a single gap.
+        """
+        per_image = {}
+        order = []
+
+        for field_key, path in field_files.items():
+            for rec in _load_jsonl(path):
+                image = rec.get("image")
+                if image is None:
+                    continue
+                if image not in per_image:
+                    per_image[image] = {"image": image, "run_name": run_key}
+                    order.append(image)
+                per_image[image][field_key] = rec.get("text")
+
+        return [per_image[image] for image in order]
+
+
+# ── Compatibility facade ─────────────────────────────────────────────────────
+
 def discover_shard_groups(directory: Path) -> dict:
     """Returns {run_key: {field_key: Path}} for every shard group found in
     directory. Files that don't match the shard naming convention are
     ignored."""
-    groups = {}
-    for path in sorted(Path(directory).glob("*.jsonl")):
-        m = SHARD_RE.match(path.name)
-        if not m:
-            continue
-        run_key = f"{m.group('base')}_j{m.group('job')}"
-        field_key = FIELD_KEY[m.group("num")]
-        groups.setdefault(run_key, {})[field_key] = path
-    return groups
+    return ShardCombiner.group_shards(directory)
 
 
 def merge_run(run_key: str, field_files: dict) -> list:
     """Joins each field shard's records by image key into one record per
     image, with plain top-level field keys."""
-    per_image = {}
-    order = []
-
-    for field_key, path in field_files.items():
-        for rec in _load_jsonl(path):
-            image = rec.get("image")
-            if image is None:
-                continue
-            if image not in per_image:
-                per_image[image] = {"image": image, "run_name": run_key}
-                order.append(image)
-            per_image[image][field_key] = rec.get("text")
-
-    return [per_image[image] for image in order]
+    return ShardCombiner.merge(run_key, field_files)
 
 
 def resolve_input_path(run_name: str, input_path: Path, search_dir: Path, out_dir: Path) -> Path:
