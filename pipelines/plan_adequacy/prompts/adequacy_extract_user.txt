@@ -1,0 +1,6 @@
+CASUALTY TYPE: {casualty}
+
+PLAN STEP {step_num}:
+{step_text}
+
+Extract this step as a single JSON object per the schema and rules above.

@@ -1,0 +1,55 @@
+{
+  "_comment": "Per-casualty terminal goal condition, plus universal obligations that apply regardless of which route a plan takes. Universal obligations are checked in executor.py pass 5, independent of route recognition -- see salvage_plan_checker.md's completeness checks (C1-C6) and methods.py RouteRegistry.",
+  "casualties": {
+    "aground": {
+      "terminal_facts": ["vessel_refloated"],
+      "description": "Vessel refloated, stable, and either under tow or left safely in place."
+    },
+    "capsized": {
+      "terminal_facts": ["vessel_righted"],
+      "description": "Vessel righted (or removed/cut up), crew safe, stability restored."
+    },
+    "sunken": {
+      "terminal_facts": ["vessel_lifted"],
+      "description": "Vessel raised, or made safe in place with pollution controlled (leave_and_mitigate route)."
+    },
+    "on_fire": {
+      "terminal_facts": ["fire_confirmed_out"],
+      "description": "Fire out, spaces stable, no reflash risk."
+    }
+  },
+  "universal_obligations": [
+    {
+      "id": "C1", "requires_fact": "fuel_offloaded",
+      "applies_to": ["aground"],
+      "except_routes": ["tide_refloat", "abandon_in_place"],
+      "note": "Only load-bearing for routes that disturb the hull; not NOT_ATTEMPTED-blocking for tide_refloat (no intervention at all) or abandon_in_place (offload IS its core_tools, not an obligation on top of it). except_routes is read by executor.py pass 5 -- do not add a route name here without checking obligations_for()'s call site.",
+      "source": "[SH]"
+    },
+    {
+      "id": "C2", "requires_fact": "tank_contents",
+      "applies_to": ["aground", "sunken"],
+      "note": "Cargo/hazmat accounted for before cutting or movement.",
+      "source": "[SH]"
+    },
+    {
+      "id": "C3", "requires_fact": "post_op_assessed",
+      "applies_to": ["aground", "capsized", "sunken", "on_fire"],
+      "note": "Post-operation assessment performed.",
+      "source": "[SH]"
+    },
+    {
+      "id": "C5", "requires_fact": "personnel_accounted",
+      "applies_to": ["aground", "capsized", "sunken", "on_fire"],
+      "note": "Personnel accounted for.",
+      "source": "[SH]"
+    },
+    {
+      "id": "C6", "requires_fact": "neba_conducted",
+      "applies_to": ["sunken"],
+      "requires_scenario_field": "habitat_sensitive",
+      "note": "Only applies when scenario.habitat_sensitive is true (see scenario.py's _habitat_sensitive proxy) -- requires_scenario_field is read by executor.py pass 5, obligation is skipped entirely when that scenario attribute is falsy.",
+      "source": "[OG]"
+    }
+  ]
+}

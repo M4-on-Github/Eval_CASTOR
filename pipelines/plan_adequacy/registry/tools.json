@@ -1,0 +1,316 @@
+{
+  "_comment": "Tool registry for the P9 plan-adequacy checker. Structure ([AUTHORED]) maps free-text plan steps onto a fixed vocabulary; each tool's `requires`/`establishes` preconditions carry their own `source` citation where the corpus supports one. Citation keys: [SH] Salvor's Handbook Rev2, [SM] Salvage Manual Vol 1 S0300-A6-MAN-010, [FSS] IMO FSS Code, [IS] 2008 IS Code MSC.267(85), [SRG] Stability Reference Guide, [OG] Operational guidelines on sunken/submerged oil, [AUTHORED] not corpus-supported. See salvage_plan_checker.md and salvage_simulation.md Appendix A.",
+  "facts": {
+    "_comment": "The full fact vocabulary any tool's establishes/requires/effects may reference. A fact is 'known' once some prior call's establishes/effects includes it (see worldstate.py). Kept flat and enumerable so the registry-integrity test (test_plan_adequacy_vocab.py) can verify every requires/preconditions reference resolves.",
+    "list": [
+      "vessel_size", "draft", "hull_condition", "tank_contents", "substrate",
+      "ground_reaction", "freeing_force", "stability", "personnel_accounted",
+      "fire_scope", "pressure_equalized", "gas_explosive_tested", "gas_oxygen_tested",
+      "gas_toxic_tested", "atmosphere_safe", "pump_capacity_confirmed", "boundaries_sealed",
+      "predischarge_alarm_sounded", "cargo_lightened", "fuel_offloaded", "seabed_cleared",
+      "impalement_removed", "beach_gear_rigged", "tug_attached", "vessel_pulled",
+      "vessel_refloated", "crew_rescued", "space_dewatered", "tanks_pressed_full",
+      "parbuckling_rigged", "vessel_righted", "hull_patched", "cofferdam_installed",
+      "tanks_blown", "vessel_lifted", "section_cut", "wreck_located", "boom_deployed",
+      "oil_skimmed", "dispersant_applied", "oil_recovered", "neba_conducted",
+      "co2_released", "foam_applied", "space_opened", "fire_confirmed_out",
+      "firefighting_water_dewatered", "post_op_assessed", "vessel_under_tow"
+    ]
+  },
+  "tools": [
+    {
+      "name": "survey_hull", "family": "assessment", "is_assessment": true,
+      "params": {"method": "str"},
+      "establishes": ["hull_condition", "vessel_size"], "requires": [], "effects": [],
+      "source": "[SH]"
+    },
+    {
+      "name": "sound_tanks", "family": "assessment", "is_assessment": true,
+      "params": {"tank_ids": "list[str]"},
+      "establishes": ["tank_contents"], "requires": [], "effects": [],
+      "source": "[SH] All tanks must be checked for fuel/hazardous cargo before cutting or movement"
+    },
+    {
+      "name": "read_draft_marks", "family": "assessment", "is_assessment": true,
+      "params": {},
+      "establishes": ["draft"], "requires": [], "effects": [],
+      "source": "[AUTHORED]"
+    },
+    {
+      "name": "survey_seabed", "family": "assessment", "is_assessment": true,
+      "params": {},
+      "establishes": ["substrate"], "requires": [], "effects": [],
+      "source": "[SH Table 4-1] substrate determines the friction band"
+    },
+    {
+      "name": "account_for_personnel", "family": "assessment", "is_assessment": true,
+      "params": {},
+      "establishes": ["personnel_accounted"], "requires": [], "effects": [],
+      "source": "[SH]"
+    },
+    {
+      "name": "size_up_fire", "family": "assessment", "is_assessment": true,
+      "params": {"space": "str"},
+      "establishes": ["fire_scope"], "requires": [], "effects": [],
+      "source": "[AUTHORED]"
+    },
+    {
+      "name": "equalize_pressure", "family": "assessment", "is_assessment": true,
+      "params": {"space": "str"},
+      "establishes": ["pressure_equalized"], "requires": [], "effects": [],
+      "source": "[SH 1-2.6.2]"
+    },
+    {
+      "name": "test_atmosphere", "family": "assessment", "is_assessment": true,
+      "params": {"space": "str", "test_type": "enum[explosive,oxygen,toxic]"},
+      "establishes": ["gas_explosive_tested", "gas_oxygen_tested", "gas_toxic_tested", "atmosphere_safe"],
+      "requires": ["pressure_equalized"],
+      "effects": [],
+      "source": "[SH 1-2.6.2] strict order: equalize pressure -> explosive -> oxygen -> toxic. `establishes` here lists everything this tool CAN eventually establish (across repeated calls) for registry-integrity purposes (test_plan_adequacy_vocab.py checks reachability against this list) -- it is NOT what a single call establishes. worldstate.py special-cases this tool name to gate each call's actual effect on its `test_type` param and enforce the sub-order, ignoring this static list at apply()/missing_requires() time."
+    },
+    {
+      "name": "calculate_ground_reaction", "family": "assessment", "is_assessment": true,
+      "params": {},
+      "establishes": ["ground_reaction"], "requires": ["substrate"], "effects": [],
+      "source": "[SH 4-3.1]"
+    },
+    {
+      "name": "calculate_freeing_force", "family": "assessment", "is_assessment": true,
+      "params": {},
+      "establishes": ["freeing_force"], "requires": ["ground_reaction", "substrate"], "effects": [],
+      "source": "[SH 4-3.1] F = 1.12 x mu_eff x R"
+    },
+    {
+      "name": "calculate_stability", "family": "assessment", "is_assessment": true,
+      "params": {},
+      "establishes": ["stability"], "requires": [], "effects": [],
+      "source": "[IS 2.2] minimum righting-arm / GM criteria"
+    },
+
+    {
+      "name": "lighter_cargo", "family": "aground", "is_assessment": false,
+      "params": {"hold_id": "str", "tonnes": "float|null"},
+      "establishes": [], "requires": ["tank_contents"], "effects": ["cargo_lightened"],
+      "source": "[SH 4-2.5] neutral-point sign rules govern where lightening helps vs hurts"
+    },
+    {
+      "name": "offload_fuel", "family": "aground", "is_assessment": false,
+      "params": {"tank_id": "str", "tonnes": "float|null"},
+      "establishes": [], "requires": ["tank_contents"], "effects": ["fuel_offloaded"],
+      "source": "[SH] fuel offload before hull disturbance"
+    },
+    {
+      "name": "dredge", "family": "aground", "is_assessment": false,
+      "params": {"area": "str", "depth": "float|null"},
+      "establishes": [], "requires": ["substrate"], "effects": ["seabed_cleared"],
+      "source": "[SH 4-5.3] hard substrate requires dredging/rock removal before pull"
+    },
+    {
+      "name": "remove_impalement", "family": "aground", "is_assessment": false,
+      "params": {"location": "str"},
+      "establishes": [], "requires": ["hull_condition"], "effects": ["impalement_removed"],
+      "source": "[SH 4-3.1.1] impalement removed before pulling"
+    },
+    {
+      "name": "rig_beach_gear", "family": "aground", "is_assessment": false,
+      "params": {"n_legs": "int|null"},
+      "establishes": [], "requires": ["freeing_force"], "effects": ["beach_gear_rigged"],
+      "source": "[SH 4-6] 60 short tons per leg"
+    },
+    {
+      "name": "attach_tug", "family": "aground", "is_assessment": false,
+      "params": {"count": "int|null", "shp": "float|null", "prop_type": "str|null"},
+      "establishes": [], "requires": [], "effects": ["tug_attached"],
+      "source": "[SM 8-3.2, Table 8-1]"
+    },
+    {
+      "name": "monitor_tide", "family": "aground", "is_assessment": false,
+      "params": {},
+      "establishes": [], "requires": [], "effects": ["vessel_refloated"],
+      "source": "[SH] dedicated tide gauge tracks ground reaction as tide rises/falls; a light strand may refloat naturally on the next high water with no active pulling. Added beyond the original 46-tool vocabulary in salvage_plan_checker.md sec.9 -- the tide_refloat route (registry/routes.json) had no tool to be recognized by without it; see the plan-adequacy design plan sec.2."
+    },
+    {
+      "name": "pull", "family": "aground", "is_assessment": false,
+      "params": {"force_t": "float|null"},
+      "establishes": [], "requires": ["freeing_force", "tank_contents"],
+      "effects": ["vessel_pulled", "vessel_refloated"],
+      "source": "[SH 4-3.1] pulling before ground reaction/freeing force is known, or before tanks sounded, is a sequencing failure"
+    },
+
+    {
+      "name": "rescue_crew", "family": "capsized", "is_assessment": false,
+      "params": {"method": "str"},
+      "establishes": [], "requires": [], "effects": ["crew_rescued"],
+      "source": "[SH] crew rescue prioritized before righting"
+    },
+    {
+      "name": "dewater", "family": "capsized", "is_assessment": false,
+      "params": {"space": "str", "pump_capacity": "float|null"},
+      "establishes": [], "requires": [], "effects": ["space_dewatered"],
+      "source": "[SRG] free-surface effect on GM"
+    },
+    {
+      "name": "press_full", "family": "capsized", "is_assessment": false,
+      "params": {"tank_id": "str"},
+      "establishes": [], "requires": [], "effects": ["tanks_pressed_full"],
+      "source": "[SRG] pressing a tank full eliminates its free surface, an alternative to dewatering"
+    },
+    {
+      "name": "rig_parbuckling", "family": "capsized", "is_assessment": false,
+      "params": {"n_points": "int|null", "capacity_t": "float|null"},
+      "establishes": [], "requires": ["crew_rescued", "stability"], "effects": ["parbuckling_rigged"],
+      "source": "[SH] righting method scales to size; parbuckling for larger vessels"
+    },
+    {
+      "name": "right_vessel", "family": "capsized", "is_assessment": false,
+      "params": {"method": "str", "load_t": "float|null"},
+      "establishes": [], "requires": ["crew_rescued", "stability"],
+      "effects": ["vessel_righted"],
+      "source": "[IS 2.2] stability must be verified before righting; [SH] crew rescue and free-surface control (dewater or press full) must precede righting"
+    },
+
+    {
+      "name": "patch_hull", "family": "sunken", "is_assessment": false,
+      "params": {"breach": "str", "material": "str|null"},
+      "establishes": [], "requires": ["atmosphere_safe"], "effects": ["hull_patched"],
+      "source": "[SM] shallow-water recovery route"
+    },
+    {
+      "name": "install_cofferdam", "family": "sunken", "is_assessment": false,
+      "params": {"depth": "float|null"},
+      "establishes": [], "requires": ["atmosphere_safe"], "effects": ["cofferdam_installed"],
+      "source": "[SM] moderate-depth recovery route"
+    },
+    {
+      "name": "blow_tanks", "family": "sunken", "is_assessment": false,
+      "params": {"space": "str"},
+      "establishes": [], "requires": ["hull_patched"], "effects": ["tanks_blown"],
+      "source": "[SM] compressed-air lift after patching/cofferdam"
+    },
+    {
+      "name": "lift", "family": "sunken", "is_assessment": false,
+      "params": {"method": "str", "force_t": "float|null"},
+      "establishes": [], "requires": ["atmosphere_safe"], "effects": ["vessel_lifted"],
+      "source": "[SM] lift-bag/craft route"
+    },
+    {
+      "name": "cut_section", "family": "sunken", "is_assessment": false,
+      "params": {"location": "str"},
+      "establishes": [], "requires": ["atmosphere_safe"], "effects": ["section_cut"],
+      "source": "[SH 1-2.7] hot work/cutting never begins before the space is confirmed gas-free"
+    },
+    {
+      "name": "sonar_search", "family": "sunken", "is_assessment": false,
+      "params": {"area": "str", "sensor": "str|null"},
+      "establishes": [], "requires": [], "effects": ["wreck_located"],
+      "source": "[AUTHORED]"
+    },
+    {
+      "name": "deploy_boom", "family": "sunken", "is_assessment": false,
+      "params": {},
+      "establishes": [], "requires": [], "effects": ["boom_deployed"],
+      "source": "[OG 2.1] surface containment; ineffective once oil density exceeds seawater"
+    },
+    {
+      "name": "skim", "family": "sunken", "is_assessment": false,
+      "params": {},
+      "establishes": [], "requires": ["boom_deployed"], "effects": ["oil_skimmed"],
+      "source": "[OG 2.1]"
+    },
+    {
+      "name": "apply_dispersant", "family": "sunken", "is_assessment": false,
+      "params": {},
+      "establishes": [], "requires": [], "effects": ["dispersant_applied"],
+      "source": "[OG]"
+    },
+    {
+      "name": "recover_oil", "family": "sunken", "is_assessment": false,
+      "params": {"method": "str"},
+      "establishes": [], "requires": [], "effects": ["oil_recovered"],
+      "source": "[OG]"
+    },
+    {
+      "name": "conduct_neba", "family": "sunken", "is_assessment": false,
+      "params": {},
+      "establishes": ["neba_conducted"], "requires": [], "effects": [],
+      "source": "[OG] Net Environmental Benefit Analysis for habitat-sensitive sites"
+    },
+
+    {
+      "name": "muster_personnel", "family": "on_fire", "is_assessment": false,
+      "params": {"space": "str"},
+      "establishes": ["personnel_accounted"], "requires": [], "effects": [],
+      "source": "[FSS 2.1.3.2] personnel confirmed clear before CO2 release"
+    },
+    {
+      "name": "seal_boundaries", "family": "on_fire", "is_assessment": false,
+      "params": {"space": "str"},
+      "establishes": [], "requires": [], "effects": ["boundaries_sealed"],
+      "source": "[FSS 2.2.1] boundaries sealed before gas flooding, else concentration unreachable"
+    },
+    {
+      "name": "confirm_pump_capacity", "family": "on_fire", "is_assessment": false,
+      "params": {"m3h": "float|null"},
+      "establishes": ["pump_capacity_confirmed"], "requires": [], "effects": [],
+      "source": "[FSS 12/2.2.1.1] emergency fire pump minimum capacity"
+    },
+    {
+      "name": "boundary_cool", "family": "on_fire", "is_assessment": false,
+      "params": {"space": "str", "asset": "str"},
+      "establishes": [], "requires": [], "effects": [],
+      "source": "[AUTHORED] monitors are boundary-cooling only, not suppression"
+    },
+    {
+      "name": "activate_predischarge_alarm", "family": "on_fire", "is_assessment": false,
+      "params": {"space": "str"},
+      "establishes": ["predischarge_alarm_sounded"],
+      "requires": ["personnel_accounted", "boundaries_sealed"], "effects": [],
+      "source": "[FSS 2.1.3.2] pre-discharge alarm >= 20s before release"
+    },
+    {
+      "name": "release_co2", "family": "on_fire", "is_assessment": false,
+      "params": {"space": "str", "mass_kg": "float|null"},
+      "establishes": [], "requires": ["predischarge_alarm_sounded", "personnel_accounted", "boundaries_sealed"],
+      "effects": ["co2_released"],
+      "source": "[FSS 5/2.2.1]"
+    },
+    {
+      "name": "apply_foam", "family": "on_fire", "is_assessment": false,
+      "params": {"space": "str", "type": "enum[standard,high_expansion,alcohol_resistant]|null",
+                  "rate_lpm": "float|null", "duration_min": "float|null"},
+      "establishes": [], "requires": ["personnel_accounted"], "effects": ["foam_applied"],
+      "source": "[FSS 6/2.2.1.2] high-expansion foam is permitted in machinery spaces; standard/low-expansion foam is not (see run_coherence_judge.py correction, salvage_plan_checker.md §10)"
+    },
+    {
+      "name": "open_space", "family": "on_fire", "is_assessment": false,
+      "params": {"space": "str"},
+      "establishes": [], "requires": ["fire_confirmed_out"], "effects": ["space_opened"],
+      "source": "[AUTHORED] reopening before fire is confirmed out risks reflash"
+    },
+    {
+      "name": "confirm_fire_out", "family": "on_fire", "is_assessment": false,
+      "params": {"space": "str"},
+      "establishes": ["fire_confirmed_out"], "requires": [], "effects": [],
+      "source": "[AUTHORED]"
+    },
+    {
+      "name": "dewater_firefighting_water", "family": "on_fire", "is_assessment": false,
+      "params": {},
+      "establishes": [], "requires": [], "effects": ["firefighting_water_dewatered"],
+      "source": "[SRG] accumulated firefighting water is a free-surface/stability hazard"
+    },
+
+    {
+      "name": "post_operation_assessment", "family": "terminal", "is_assessment": false,
+      "params": {},
+      "establishes": ["post_op_assessed"], "requires": [], "effects": [],
+      "source": "[SH]"
+    },
+    {
+      "name": "tow", "family": "terminal", "is_assessment": false,
+      "params": {"tug_class": "str|null", "destination": "str|null"},
+      "establishes": [], "requires": ["post_op_assessed"], "effects": ["vessel_under_tow"],
+      "source": "[SH] post-operation assessment before tow"
+    }
+  ]
+}

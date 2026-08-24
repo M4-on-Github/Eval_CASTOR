@@ -1,0 +1,197 @@
+{
+  "_comment": "Route library for P9's route-scoped validity model (plan-adequacy design plan, section 2). A goal is reachable by several genuinely valid routes; a plan is graded against the ONE route it recognisably instantiates, not a canonical sequence. `core_tools` drives recognition (argmax overlap, methods.py:recognise_route); `preconditions` are facts the route's action steps require (each carries its own `source`); `admissibility` is evaluated per-scenario by methods.py:admissible(). Structure is [AUTHORED]; individual preconditions are sourced where the corpus supports them.",
+  "_known_limitation": "Recognition is by tool-name overlap only, not param values. The two on_fire foam routes (high_expansion_foam, deck_foam_system) currently share the apply_foam core tool and cannot be told apart by core_tools alone -- disambiguating by params.type/params.space is deferred to phase 2 physics.py. See methods.py:recognise_route docstring.",
+  "admissibility_kinds": {
+    "always": "admissible for every scenario in this casualty",
+    "scenario_field": "admissible iff scenario.<field> is in `allowed`",
+    "unknown_pending_physics": "cannot be decided without phase-2 physics.py (F_required, righting-load calc, etc); admissible() returns \"unknown\" and executor.py must not penalise ROUTE_INADMISSIBLE on an \"unknown\" verdict"
+  },
+  "routes": {
+    "aground": [
+      {
+        "name": "tide_refloat", "goal": "vessel_refloated",
+        "core_tools": ["monitor_tide"],
+        "preconditions": [],
+        "admissibility": {"kind": "unknown_pending_physics",
+          "note": "light strand only; needs tidal-lift vs ground-reaction comparison"},
+        "source": "[SH] tide gauge tracks R as tide rises/falls; light strands may refloat naturally"
+      },
+      {
+        "name": "tug_pull", "goal": "vessel_refloated",
+        "core_tools": ["attach_tug", "pull"],
+        "preconditions": ["freeing_force", "tank_contents"],
+        "admissibility": {"kind": "unknown_pending_physics",
+          "note": "Sigma BP >= 1.25 x F_required (A1); tugs alone normally free only lightly stranded ships"},
+        "source": "[SM 8-3.2, Table 8-1]"
+      },
+      {
+        "name": "beach_gear", "goal": "vessel_refloated",
+        "core_tools": ["rig_beach_gear", "pull"],
+        "preconditions": ["freeing_force", "tank_contents"],
+        "admissibility": {"kind": "unknown_pending_physics",
+          "note": "60 st/leg + any tug BP >= F_required (A3)"},
+        "source": "[SH 4-6]"
+      },
+      {
+        "name": "weight_reduction", "goal": "vessel_refloated",
+        "core_tools": ["lighter_cargo", "pull"],
+        "preconditions": ["tank_contents", "freeing_force"],
+        "admissibility": {"kind": "always"},
+        "source": "[SH 4-2.5] neutral-point sign rules: removal aft of NP increases R, not always beneficial -- see M4 in salvage_plan_checker.md"
+      },
+      {
+        "name": "seabed_modification", "goal": "vessel_refloated",
+        "core_tools": ["dredge", "pull"],
+        "preconditions": ["substrate", "freeing_force"],
+        "admissibility": {"kind": "scenario_field", "field": "substrate", "allowed": ["coral", "rock"],
+          "note": "phase-2: substrate comes from scenario once physics.py adds it; scenario.py v1 does not populate substrate (see build order sec.7)"},
+        "source": "[SH 4-5.3] hard substrate requires dredging/rock removal before pull"
+      },
+      {
+        "name": "combined", "goal": "vessel_refloated",
+        "core_tools": ["lighter_cargo", "rig_beach_gear", "dredge", "pull"],
+        "preconditions": ["tank_contents", "substrate", "freeing_force"],
+        "admissibility": {"kind": "always"},
+        "source": "[SM] the realistic heavy-strand answer -- weight reduction + beach gear + seabed work together"
+      },
+      {
+        "name": "abandon_in_place", "goal": "vessel_refloated",
+        "core_tools": ["offload_fuel"],
+        "preconditions": ["tank_contents"],
+        "admissibility": {"kind": "always",
+          "note": "a legitimate terminal route for a constructive total loss: strip pollutants, leave or scuttle -- goal.terminal_facts (vessel_refloated) does not apply; TODO phase-2: goal-fact checking is not wired into executor.py yet (it only checks core_tools presence/verdict, not goal.terminal_facts at all) -- once it is, this route's completion condition should be fuel_offloaded + post_op_assessed instead of vessel_refloated"},
+        "source": "[SH]"
+      }
+    ],
+    "capsized": [
+      {
+        "name": "manual_righting", "goal": "vessel_righted",
+        "core_tools": ["right_vessel"],
+        "preconditions": ["crew_rescued", "stability"],
+        "admissibility": {"kind": "scenario_field", "field": "size_category", "allowed": ["small"]},
+        "source": "[SH] manual or crane righting for small craft"
+      },
+      {
+        "name": "crane_lift_right", "goal": "vessel_righted",
+        "core_tools": ["right_vessel"],
+        "preconditions": ["crew_rescued", "stability"],
+        "admissibility": {"kind": "scenario_field", "field": "size_category", "allowed": ["small", "medium"]},
+        "source": "[SH] crane righting is size-limited"
+      },
+      {
+        "name": "parbuckling", "goal": "vessel_righted",
+        "core_tools": ["rig_parbuckling", "right_vessel"],
+        "preconditions": ["crew_rescued", "stability"],
+        "admissibility": {"kind": "scenario_field", "field": "size_category", "allowed": ["medium", "large"]},
+        "source": "[SH] controlled deballasting or parbuckling for larger vessels"
+      },
+      {
+        "name": "controlled_deballast_press", "goal": "vessel_righted",
+        "core_tools": ["press_full", "right_vessel"],
+        "preconditions": ["crew_rescued", "stability"],
+        "admissibility": {"kind": "always"},
+        "source": "[SRG] pressing tanks full controls free-surface during a deballasted righting sequence"
+      },
+      {
+        "name": "refloat_inverted_then_right", "goal": "vessel_righted",
+        "core_tools": ["dewater", "right_vessel"],
+        "preconditions": ["crew_rescued", "stability"],
+        "admissibility": {"kind": "always"},
+        "source": "[SH] refloating method differs for a fully inverted hull vs one on its side"
+      },
+      {
+        "name": "cut_and_remove", "goal": "vessel_righted",
+        "core_tools": ["cut_section", "lift"],
+        "preconditions": ["crew_rescued"],
+        "admissibility": {"kind": "always",
+          "note": "terminal route when righting is not viable; TODO phase-2: once executor.py checks goal.terminal_facts, this route's completion condition should be section_cut + vessel_lifted rather than vessel_righted"},
+        "source": "[AUTHORED]"
+      }
+    ],
+    "sunken": [
+      {
+        "name": "patch_and_pump", "goal": "vessel_lifted",
+        "core_tools": ["patch_hull", "blow_tanks"],
+        "preconditions": ["atmosphere_safe"],
+        "admissibility": {"kind": "scenario_field", "field": "depth_category", "allowed": ["shallow"],
+          "note": "scenario.py v1 does not populate depth_category; phase 2"},
+        "source": "[SM] shallow-water recovery route"
+      },
+      {
+        "name": "cofferdam_and_pump", "goal": "vessel_lifted",
+        "core_tools": ["install_cofferdam", "blow_tanks"],
+        "preconditions": ["atmosphere_safe"],
+        "admissibility": {"kind": "scenario_field", "field": "depth_category", "allowed": ["moderate"]},
+        "source": "[SM] moderate-depth recovery route"
+      },
+      {
+        "name": "lift_bags_or_craft", "goal": "vessel_lifted",
+        "core_tools": ["lift"],
+        "preconditions": ["atmosphere_safe"],
+        "admissibility": {"kind": "always"},
+        "source": "[SM] lift-bag/craft route"
+      },
+      {
+        "name": "cut_and_lift_sections", "goal": "vessel_lifted",
+        "core_tools": ["cut_section", "lift"],
+        "preconditions": ["atmosphere_safe"],
+        "admissibility": {"kind": "scenario_field", "field": "depth_category", "allowed": ["deep"]},
+        "source": "[SM] deep/badly-damaged wrecks recovered in sections"
+      },
+      {
+        "name": "leave_and_mitigate", "goal": "vessel_lifted",
+        "core_tools": ["deploy_boom", "recover_oil", "conduct_neba"],
+        "preconditions": [],
+        "admissibility": {"kind": "always",
+          "note": "legitimate terminal route: leave in place, control pollution. TODO phase-2: once executor.py checks goal.terminal_facts, this route's completion condition should be oil_recovered + neba_conducted rather than vessel_lifted"},
+        "source": "[OG]"
+      }
+    ],
+    "on_fire": [
+      {
+        "name": "fixed_gas_flooding", "goal": "fire_confirmed_out",
+        "core_tools": ["seal_boundaries", "activate_predischarge_alarm", "release_co2"],
+        "preconditions": ["personnel_accounted", "boundaries_sealed", "predischarge_alarm_sounded"],
+        "admissibility": {"kind": "always"},
+        "source": "[FSS 5/2.2.1]"
+      },
+      {
+        "name": "high_expansion_foam", "goal": "fire_confirmed_out",
+        "core_tools": ["apply_foam"],
+        "preconditions": ["personnel_accounted"],
+        "admissibility": {"kind": "always"},
+        "source": "[FSS 6/2.2.1.2] high-expansion foam is explicitly permitted in machinery spaces -- see the P8 judge-prompt correction in salvage_plan_checker.md sec.10"
+      },
+      {
+        "name": "deck_foam_system", "goal": "fire_confirmed_out",
+        "core_tools": ["apply_foam"],
+        "preconditions": ["personnel_accounted"],
+        "admissibility": {"kind": "always"},
+        "source": "[FSS 14/2.2.1.1]"
+      },
+      {
+        "name": "boundary_cooling_burnout", "goal": "fire_confirmed_out",
+        "core_tools": ["boundary_cool"],
+        "preconditions": [],
+        "admissibility": {"kind": "always",
+          "note": "controlled burnout with boundary cooling only, for an uncontrollable or inaccessible fire"},
+        "source": "[AUTHORED]"
+      },
+      {
+        "name": "external_attack_water", "goal": "fire_confirmed_out",
+        "core_tools": ["boundary_cool", "confirm_pump_capacity"],
+        "preconditions": ["pump_capacity_confirmed"],
+        "admissibility": {"kind": "always"},
+        "source": "[FSS 12/2.2.1.1]"
+      },
+      {
+        "name": "abandon_and_control", "goal": "fire_confirmed_out",
+        "core_tools": ["muster_personnel", "seal_boundaries"],
+        "preconditions": ["personnel_accounted"],
+        "admissibility": {"kind": "always",
+          "note": "evacuate and contain without active suppression; TODO phase-2: once executor.py checks goal.terminal_facts, this route's completion condition should be boundaries_sealed rather than fire_confirmed_out"},
+        "source": "[AUTHORED]"
+      }
+    ]
+  }
+}
