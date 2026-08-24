@@ -127,11 +127,39 @@ def _run_vllm_batch(prompts: list, model_dir: str, schema: dict,
     results = []
     for o in outputs:
         raw_text = o.outputs[0].text.strip()
+        cleaned = _strip_wrapper_artifacts(raw_text)
         try:
-            results.append(json.loads(raw_text))
-        except (json.JSONDecodeError, AttributeError):
-            results.append(None)
+            results.append((json.loads(cleaned), raw_text))
+        except (json.JSONDecodeError, AttributeError) as e:
+            # Keep the raw text on every failure, not just a sample -- the
+            # calibration bake-off against llama_3_3_70b (2026-08-24) hit
+            # 100% parse failure with zero exceptions anywhere in the vLLM
+            # logs (guided decoding was active, no crash, no timeout) and
+            # there was nothing to inspect afterward because nothing had
+            # been captured. Whatever the actual cause turns out to be,
+            # not saving raw_text made it undiagnosable after the fact.
+            results.append((None, raw_text))
     return results
+
+
+#: Guided decoding is supposed to constrain the ENTIRE completion to the
+#: schema, so wrapper text shouldn't normally appear -- but some models'
+#: native chat templates (Llama 3.1+'s built-in tool-calling format is the
+#: leading suspect for the 100% parse-failure case above) can still inject
+#: markdown fences or a tag/preamble around an otherwise schema-valid
+#: object. Mirrors the stripping shared/ollama.py:call_ollama already does
+#: for the same reason on the Ollama side of this repo.
+_CODE_FENCE_RE = re.compile(r'^```(?:json)?\s*|\s*```$', re.MULTILINE)
+
+
+def _strip_wrapper_artifacts(text: str) -> str:
+    stripped = _CODE_FENCE_RE.sub('', text).strip()
+    # A JSON object nested in leading/trailing prose -- take the outermost
+    # {...} span rather than the whole string.
+    start, end = stripped.find('{'), stripped.rfind('}')
+    if start != -1 and end != -1 and end > start:
+        return stripped[start:end + 1]
+    return stripped
 
 
 def extract_steps(steps: list, casualty: str, model_dir: str, registry: ToolRegistry,
@@ -143,8 +171,8 @@ def extract_steps(steps: list, casualty: str, model_dir: str, registry: ToolRegi
     system = build_system_prompt(registry)
     prompts = [(system, build_user_prompt(casualty, n, t)) for n, t in steps]
     schema = build_guided_json_schema(registry)
-    raw_results = _run_vllm_batch(prompts, model_dir, schema, max_model_len, max_tokens)
+    parsed_and_raw = _run_vllm_batch(prompts, model_dir, schema, max_model_len, max_tokens)
     return [
-        parse_extraction(raw, n, t)
-        for (n, t), raw in zip(steps, raw_results)
+        parse_extraction(parsed, n, t)
+        for (n, t), (parsed, _raw) in zip(steps, parsed_and_raw)
     ]

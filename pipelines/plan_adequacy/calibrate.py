@@ -256,17 +256,29 @@ def check_thresholds(headline_metrics: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 def run_calibration(model_key: str, model_dir: str, gold_path: Path,
-                     max_model_len: int = 4096, max_tokens: int = 256) -> dict:
+                     max_model_len: int = 4096, max_tokens: int = 256,
+                     limit: Optional[int] = None, raw_sample_size: int = 20) -> dict:
     """Extract every gold step with the given model, score against gold,
     and return the full report (headline + per-layer + per-failure-type +
     per-casualty + threshold check). This is the only function in this
-    module that touches vLLM (via extract.py, imported lazily inside it)."""
+    module that touches vLLM (via extract.py, imported lazily inside it).
+
+    `limit` truncates the gold set for a cheap smoke test before committing
+    a full run -- same convention as run_coherence_judge.py/
+    check_assertions.py's --limit. `raw_sample_size` controls how many
+    RAW (unparsed) model responses get saved in the report for parse
+    failures specifically -- added after a calibration run against
+    llama_3_3_70b came back with 100% parse failure and nothing to inspect
+    afterward (no exception anywhere in the vLLM logs, so the only way to
+    diagnose it is to actually look at what the model produced)."""
     from pipelines.plan_adequacy.extract import (
         build_system_prompt, build_user_prompt, _run_vllm_batch, parse_extraction,
     )
 
     registry = ToolRegistry.load()
     gold_records = load_gold(gold_path)
+    if limit:
+        gold_records = gold_records[:limit]
     schema = build_guided_json_schema(registry)
     system = build_system_prompt(registry)
 
@@ -274,13 +286,19 @@ def run_calibration(model_key: str, model_dir: str, gold_path: Path,
         (system, build_user_prompt(r["casualty"], i + 1, r["step_text"]))
         for i, r in enumerate(gold_records)
     ]
-    raw_results = _run_vllm_batch(prompts, model_dir, schema, max_model_len, max_tokens)
+    parsed_and_raw = _run_vllm_batch(prompts, model_dir, schema, max_model_len, max_tokens)
 
     scored = []
-    for gold, raw in zip(gold_records, raw_results):
-        parse_ok = raw is not None
-        call = parse_extraction(raw, 0, gold["step_text"])
+    raw_failure_samples = []
+    for gold, (parsed, raw_text) in zip(gold_records, parsed_and_raw):
+        parse_ok = parsed is not None
+        call = parse_extraction(parsed, 0, gold["step_text"])
         scored.append(score_record(gold, call, parse_ok))
+        if not parse_ok and len(raw_failure_samples) < raw_sample_size:
+            raw_failure_samples.append({
+                "gold_id": gold.get("gold_id"), "step_text": gold["step_text"],
+                "raw_response": raw_text,
+            })
 
     headline = aggregate([s for s in scored if s["layer"] == HEADLINE_LAYER])
     thresholds = check_thresholds(headline)
@@ -288,12 +306,14 @@ def run_calibration(model_key: str, model_dir: str, gold_path: Path,
     return {
         "model": model_key,
         "model_dir": model_dir,
+        "n_gold_used": len(gold_records),
         "headline": headline,
         "thresholds": thresholds,
         "by_layer": stratify(scored, "layer"),
         "by_failure_type": stratify([s for s in scored if s["layer"] == "B"], "failure_type"),
         "by_casualty": stratify(scored, "casualty"),
         "overall": aggregate(scored),
+        "raw_failure_samples": raw_failure_samples,
     }
 
 
@@ -310,10 +330,12 @@ def main():
                      help="Output directory")
     ap.add_argument("--max-model-len", type=int, default=4096)
     ap.add_argument("--max-tokens", type=int, default=256)
+    ap.add_argument("--limit", type=int, default=None,
+                     help="Smoke test: score only the first N gold records")
     args = ap.parse_args()
 
     report = run_calibration(args.model, args.model_dir, args.gold,
-                              args.max_model_len, args.max_tokens)
+                              args.max_model_len, args.max_tokens, args.limit)
 
     args.out.mkdir(parents=True, exist_ok=True)
     out_path = args.out / f"calibration_{args.model}.json"
@@ -331,6 +353,14 @@ def main():
     print(f"  parse_failure_rate     : {h['parse_failure_rate']}  (<= {THRESHOLDS['parse_failure_rate_max']})")
     print(f"  per-tool floor failures: {t['per_tool_floor']['failures']}")
     print(f"\n  OVERALL: {'PASS' if t['overall_pass'] else 'FAIL'}")
+
+    samples = report.get("raw_failure_samples", [])
+    if samples:
+        print(f"\n  {len(samples)} raw parse-failure sample(s) (also in the JSON report):")
+        for s in samples[:5]:
+            print(f"    step: {s['step_text'][:80]!r}")
+            print(f"    raw : {s['raw_response'][:200]!r}\n")
+
     print(f"\n  Report written to {out_path}")
 
 

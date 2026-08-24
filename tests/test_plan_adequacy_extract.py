@@ -13,6 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from pipelines.plan_adequacy.extract import (
+    _strip_wrapper_artifacts,
     build_system_prompt,
     build_user_prompt,
     parse_extraction,
@@ -92,6 +93,37 @@ def test_parse_extraction_preserves_step_num_and_text():
     call = parse_extraction({"tool": "no_match"}, 7, "Coordinate with stakeholders.")
     assert call.step_num == 7
     assert call.step_text == "Coordinate with stakeholders."
+
+
+# ── wrapper-artifact stripping ────────────────────────────────────────────
+# Added after the calibration bake-off (2026-08-24) hit 100% parse failure
+# against llama_3_3_70b with no exception anywhere in the vLLM logs --
+# guided decoding is supposed to constrain the whole completion to the
+# schema, but some models' native chat/tool-call formats can still wrap it.
+
+def test_strip_wrapper_artifacts_plain_json_passthrough():
+    raw = '{"tool": "attach_tug"}'
+    assert _strip_wrapper_artifacts(raw) == raw
+
+
+def test_strip_wrapper_artifacts_markdown_fence():
+    raw = '```json\n{"tool": "attach_tug"}\n```'
+    assert _strip_wrapper_artifacts(raw) == '{"tool": "attach_tug"}'
+
+
+def test_strip_wrapper_artifacts_leading_prose():
+    raw = 'Here is the JSON:\n{"tool": "attach_tug"}'
+    assert _strip_wrapper_artifacts(raw) == '{"tool": "attach_tug"}'
+
+
+def test_strip_wrapper_artifacts_trailing_prose():
+    raw = '{"tool": "attach_tug"}\nLet me know if you need anything else.'
+    assert _strip_wrapper_artifacts(raw) == '{"tool": "attach_tug"}'
+
+
+def test_strip_wrapper_artifacts_no_braces_returns_unchanged():
+    raw = 'no json here'
+    assert _strip_wrapper_artifacts(raw) == raw
 
 
 # ── schema/prompt consistency ─────────────────────────────────────────────
