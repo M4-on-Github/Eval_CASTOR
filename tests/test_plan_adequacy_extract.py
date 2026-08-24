@@ -134,3 +134,27 @@ def test_schema_tool_enum_matches_system_prompt_tool_list():
     schema_tools = set(schema["properties"]["tool"]["enum"])
     prompt_tools = {t for t in reg.all_tool_names() if t in build_system_prompt(reg)}
     assert schema_tools - {"no_match"} == prompt_tools
+
+
+def test_schema_nullable_fields_use_anyof_not_type_array():
+    """Regression anchor: calibration against glm4_32b (2026-08-24) showed
+    null_fidelity pinned at exactly 0.0 across two runs -- unmoved even
+    after adding twelve explicit prompt examples of correct null usage.
+    That flatness pointed at a structurally unreachable value, not a
+    prompt-following failure: the schema used the "type": [...] shorthand,
+    which some guided-decoding grammar compilers (this cluster's vLLM 0.8.5)
+    don't fully support and can silently collapse to one type. Switched to
+    `anyOf`, which is far more universally supported for the same union.
+    This test guards against the shorthand creeping back in."""
+    reg = _reg()
+    schema = build_guided_json_schema(reg)
+
+    for name, prop in schema["properties"]["params"]["properties"].items():
+        assert "type" not in prop or not isinstance(prop["type"], list), (
+            f"params.{name} uses the type-array shorthand instead of anyOf"
+        )
+        assert "anyOf" in prop, f"params.{name} should declare anyOf for its nullable union"
+
+    condition_text_prop = schema["properties"]["condition_text"]
+    assert "type" not in condition_text_prop or not isinstance(condition_text_prop["type"], list)
+    assert "anyOf" in condition_text_prop

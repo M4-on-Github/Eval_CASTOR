@@ -184,9 +184,22 @@ def build_guided_json_schema(registry: "ToolRegistry" = None) -> dict:
     for name in reg.all_tool_names():
         param_names |= set(reg.spec(name).params.keys())
 
-    params_properties = {
-        p: {"type": ["string", "number", "null"]} for p in sorted(param_names)
+    # anyOf, not the "type": [...] shorthand -- calibration against
+    # glm4_32b (2026-08-24) showed null_fidelity pinned at EXACTLY 0.0
+    # across two runs, unmoved by twelve explicit prompt examples of
+    # correct null usage. That flatness (not "usually wrong", literally
+    # ALWAYS wrong) is the signature of a structurally unreachable value,
+    # not a prompt-following failure -- some guided-decoding grammar
+    # compilers (this cluster runs vLLM 0.8.5) don't fully support the
+    # type-array shorthand and can silently collapse it to a single type,
+    # making null impossible to emit regardless of instructions. anyOf is
+    # the more universally supported way to express the same union.
+    _NULLABLE_STRING_OR_NUMBER = {
+        "anyOf": [{"type": "string"}, {"type": "number"}, {"type": "null"}]
     }
+    _NULLABLE_STRING = {"anyOf": [{"type": "string"}, {"type": "null"}]}
+
+    params_properties = {p: dict(_NULLABLE_STRING_OR_NUMBER) for p in sorted(param_names)}
 
     return {
         "type": "object",
@@ -202,7 +215,7 @@ def build_guided_json_schema(registry: "ToolRegistry" = None) -> dict:
                 "items": {"type": "string", "enum": tool_names},
             },
             "conditional": {"type": "boolean"},
-            "condition_text": {"type": ["string", "null"]},
+            "condition_text": dict(_NULLABLE_STRING),
             "condition_var": {"type": "string", "enum": list(_CONDITION_VARS)},
         },
         "required": ["tool", "params", "secondary_tools", "conditional",
