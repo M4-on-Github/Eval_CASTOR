@@ -4,9 +4,50 @@ Rules:
 1. Pick exactly one "tool" from the allowed list -- the action the step's own main clause commits to performing. If the step's real content is described in a "to ..." purpose clause (e.g. "Deploy pumps to remove water" -> the tool is about removing water, not about deploying), use that. If the step names no concrete action from the allowed list, output "no_match".
 2. "params" are numeric or short string values the step explicitly states (a tug count, a force in tons, a tank ID). If a parameter is not given a value in the text, output null for it -- do NOT guess a plausible number. A missing number is a real and correct answer, not a failure.
 3. "secondary_tools" lists any OTHER tools from the allowed list also named in the step, that are not the primary commitment (e.g. equipment mentioned only to explain why the primary action works, or an action referenced only inside an "if/unless/once" clause). Leave empty if there are none.
-4. "conditional" is true only if the step's primary action is itself gated on an unresolved condition (e.g. "If the vessel is large, deploy more tugs"). A step that performs an assessment to establish something unknown (e.g. "assess the hull and determine if it can be refloated") is NOT conditional -- the assessment IS the action.
+4. "conditional" is true ONLY if the step's primary action is itself gated on a fact that is not yet established -- i.e. the plan is refusing to commit until something is known. Most steps are NOT conditional; treat "conditional: false" as the default and only mark true when the step genuinely withholds commitment. The following do NOT count as conditional, even though they may contain the word "if":
+   - An assessment step whose job is to establish something unknown ("assess the hull and determine if it can be refloated" -- the assessment IS the committed action, not a condition on it).
+   - "if" used as a synonym for "whether" after a verb like determine/assess/check/verify ("verify if pump capacity is adequate" is a commitment to verify, not a condition).
+   - A step that names a specific, already-decided technique, even if the step's reasoning mentions a condition that a PRIOR step already resolved.
 5. If conditional, "condition_text" is the condition clause verbatim, and "condition_var" is whichever of these best names what the condition depends on: vessel_size, draft, substrate, depth, cargo_type, damage, none. Use "none" only when a genuine condition exists but doesn't map to any of these.
 6. A step describing meta-planning ("develop a plan that includes...") is "no_match" regardless of what equipment is mentioned inside the plan being described -- it commits to nothing yet.
 7. A step confirming personnel are clear "before activating" some suppression system is about the personnel confirmation, not the (not-yet-activated) suppression system -- the suppression tool belongs in secondary_tools, if anywhere.
+
+Examples:
+
+Step: "Deploy two harbor tugs to apply pulling force and free the vessel from the sand bank."
+{"tool": "attach_tug", "params": {"count": 2, "shp": null, "prop_type": null}, "secondary_tools": ["pull"], "conditional": false, "condition_text": null, "condition_var": "none"}
+
+Step: "Deploy the dive and survey team to assess the hull integrity, internal flooding, and cargo status." (a long, multi-clause assessment sentence naming several things at once -- the primary commitment is still the hull assessment; the rest are secondary)
+{"tool": "survey_hull", "params": {"method": null}, "secondary_tools": ["sound_tanks"], "conditional": false, "condition_text": null, "condition_var": "none"}
+
+Step: "If the vessel is a deep-draft vessel (>10 m draft), deploy ocean-going salvage tugs." (a genuine gate: the action is withheld until draft is known)
+{"tool": "attach_tug", "params": {"count": null, "shp": null, "prop_type": null}, "secondary_tools": [], "conditional": true, "condition_text": "if the vessel is a deep-draft vessel (>10 m draft)", "condition_var": "draft"}
+
+Step: "Assess the hull and determine if it can be refloated without further damage." (contains "if", but this is NOT conditional -- the assessment is the committed action, not gated on anything)
+{"tool": "survey_hull", "params": {"method": null}, "secondary_tools": [], "conditional": false, "condition_text": null, "condition_var": "none"}
+
+Step: "Confirm the engine room is clear of all personnel before activating the fixed CO2 suppression system." (the commitment is the personnel confirmation; CO2 release is deferred, so it goes in secondary_tools, and the step itself is not conditional -- it unconditionally commits to confirming clearance)
+{"tool": "muster_personnel", "params": {"space": "engine room"}, "secondary_tools": ["release_co2"], "conditional": false, "condition_text": null, "condition_var": "none"}
+
+Step: "Account for all crew members before proceeding with any further action." (a general personnel headcount, not tied to a fire/suppression context -- this is account_for_personnel, not muster_personnel, which is specifically the on_fire-casualty personnel-clearance tool)
+{"tool": "account_for_personnel", "params": {}, "secondary_tools": [], "conditional": false, "condition_text": null, "condition_var": "none"}
+
+Step: "Directly activate the CO2 fixed suppression system to flood the engine room and suppress the machinery space fire." (this one DOES commit to the release itself, unlike the muster_personnel example above)
+{"tool": "release_co2", "params": {"space": "engine room", "mass_kg": null}, "secondary_tools": [], "conditional": false, "condition_text": null, "condition_var": "none"}
+
+Step: "Apply patch-and-cofferdam method to the identified breach; use submersible pumps to dewater the patched compartment and refloat." (a compound sunken-recovery sentence -- pick install_cofferdam as primary since it is the more specific technique named first, patch_hull and dewater and pull are secondary)
+{"tool": "install_cofferdam", "params": {"depth": null}, "secondary_tools": ["patch_hull", "dewater", "pull"], "conditional": false, "condition_text": null, "condition_var": "none"}
+
+Step: "Calculate the required pulling force based on the ground reaction and seabed friction coefficient." (calculating the FORCE is the primary commitment; ground reaction is an input already assumed known, not a separate action being performed here)
+{"tool": "calculate_freeing_force", "params": {}, "secondary_tools": [], "conditional": false, "condition_text": null, "condition_var": "none"}
+
+Step: "Determine the ground reaction for the vessel resting on the sand seabed." (this one IS calculating ground reaction itself, not freeing force)
+{"tool": "calculate_ground_reaction", "params": {}, "secondary_tools": [], "conditional": false, "condition_text": null, "condition_var": "none"}
+
+Step: "Coordinate with relevant authorities and stakeholders to ensure a safe and effective response." (no concrete action from the allowed list -- generic filler)
+{"tool": "no_match", "params": {}, "secondary_tools": [], "conditional": false, "condition_text": null, "condition_var": "none"}
+
+Step: "If the vessel is deemed salvageable, develop a detailed salvage plan that includes the use of cranes, pumps, and patching materials." (meta-planning -- no_match regardless of the equipment named inside the plan being described)
+{"tool": "no_match", "params": {}, "secondary_tools": [], "conditional": false, "condition_text": null, "condition_var": "none"}
 
 Respond with a single JSON object matching the required schema. No explanation, no markdown fences.
