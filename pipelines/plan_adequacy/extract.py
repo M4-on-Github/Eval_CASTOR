@@ -76,7 +76,17 @@ def parse_extraction(raw: Optional[dict], step_num: int, step_text: str) -> Tool
         step_num=step_num,
         step_text=step_text,
         tool=tool,
-        params={k: v for k, v in params.items() if v is not None},
+        # Explicit None values are kept, not dropped -- three consecutive
+        # calibration runs against glm4_32b (2026-08-24) read null_fidelity
+        # as EXACTLY 0.0 with no movement across a prompt fix and a schema
+        # fix, which turned out to be because a correctly-nulled param
+        # never survived to here: `if v is not None` silently deleted the
+        # very keys the null-fidelity metric exists to check, so the
+        # scorer could never see a correct null, only ever a real value
+        # (via a key gold didn't have either) or nothing at all. Params
+        # the model never mentions at all are still absent from this dict,
+        # same as before -- only an EXPLICIT null now survives.
+        params=dict(params),
         conditional=bool(raw.get("conditional", False)),
         condition_text=raw.get("condition_text"),
         condition_var=raw.get("condition_var") or "none",

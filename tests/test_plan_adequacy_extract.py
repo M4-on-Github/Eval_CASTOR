@@ -60,8 +60,22 @@ def test_parse_extraction_well_formed():
     }
     call = parse_extraction(raw, 3, "Deploy two tugs and pull.")
     assert call.tool == "attach_tug"
-    assert call.params == {"count": 2}  # None values dropped
+    # Explicit nulls are KEPT, not dropped -- see parse_extraction's
+    # docstring comment for why this direction matters for calibration.
+    assert call.params == {"count": 2, "shp": None}
     assert call.secondary_tools == ("pull",)
+
+
+def test_parse_extraction_explicit_null_param_is_preserved_not_dropped():
+    """Regression anchor for the null_fidelity scoring bug: an earlier
+    version filtered `if v is not None` here, which silently deleted every
+    correctly-nulled param before calibrate.py's scorer ever saw it --
+    three consecutive calibration runs read null_fidelity as exactly 0.0
+    with no way for it to ever be otherwise, regardless of model behavior."""
+    raw = {"tool": "attach_tug", "params": {"count": None}}
+    call = parse_extraction(raw, 1, "text")
+    assert "count" in call.params
+    assert call.params["count"] is None
 
 
 def test_parse_extraction_none_input_is_no_match():
