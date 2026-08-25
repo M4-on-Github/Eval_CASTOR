@@ -123,6 +123,7 @@ def _flatten_plan_row(result: PlanResult) -> dict:
         "gate_rate": s["gate_rate"],
         "unresolved_gate_count": s["unresolved_gate_count"],
         "self_contradictory_on_size": s["self_contradictory_on_size"],
+        "goal_reached": s["goal_reached"],
     }
     for v in STEP_VERDICTS:
         row[f"n_{v}"] = s["counts"].get(v, 0)
@@ -144,7 +145,7 @@ def _per_image_fieldnames() -> list:
     end-to-end-pipeline plan, Part 1."""
     fields = ["image", "casualty", "route_name", "route_score", "route_admissible",
               "route_coherence", "route_completeness", "gate_rate",
-              "unresolved_gate_count", "self_contradictory_on_size"]
+              "unresolved_gate_count", "self_contradictory_on_size", "goal_reached"]
     fields += [f"n_{v}" for v in STEP_VERDICTS]
     for field in _LIST_FIELDS:
         fields += [f"n_{field}", f"{field}_text"]
@@ -191,6 +192,7 @@ def build_summary(run_name: str, per_image_rows: list) -> dict:
         return _mean_of(field, rows)
 
     n_route_recognised = sum(1 for r in per_image_rows if r["route_name"])
+    n_goal_reached = sum(1 for r in per_image_rows if str(r["goal_reached"]) == "True")
     self_contra_rate = (
         sum(1 for r in per_image_rows if str(r["self_contradictory_on_size"]) == "True") / n_images
         if n_images else None
@@ -200,6 +202,7 @@ def build_summary(run_name: str, per_image_rows: list) -> dict:
         "run": run_name,
         "n_images": n_images,
         "pct_route_recognised": round(n_route_recognised / n_images, 3) if n_images else None,
+        "pct_goal_reached": round(n_goal_reached / n_images, 3) if n_images else None,
         "self_contradictory_on_size_rate": round(self_contra_rate, 3) if self_contra_rate is not None else None,
     }
     for field in _SUMMARY_NUMERIC_FIELDS:

@@ -204,6 +204,15 @@ def build_narrative(summary: dict) -> list:
     aggregate.py:227,243-244."""
     lines = []
 
+    pct_goal = summary.get("pct_goal_reached")
+    if pct_goal is not None:
+        glyph = _PASS_GLYPH if float(pct_goal) > 0.5 else _MARGINAL_GLYPH if float(pct_goal) > 0.1 else _FAIL_GLYPH
+        lines.append(
+            f"- Goal reached: {fmt(pct_goal)} of plans ({glyph}) -- zero violations anywhere in the plan "
+            f"AND the casualty's terminal state actually established. The strictest single number this "
+            f"report produces; a plan can score well on every other metric and still fail this one."
+        )
+
     total = _step_total(summary)
     mean_unspecified = summary.get("mean_n_UNSPECIFIED")
     if total and mean_unspecified is not None:

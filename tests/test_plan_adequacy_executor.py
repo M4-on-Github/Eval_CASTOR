@@ -118,9 +118,9 @@ def test_no_match_tool_produces_no_match_verdict_not_a_crash():
 # ── route recognition wired end to end ───────────────────────────────────────
 
 def test_full_tug_pull_plan_recognises_route_and_sequences_cleanly():
-    # NOT a goal-achievement test -- executor.py does not check
-    # goal.terminal_facts yet (phase 2, see routes.json TODOs). This only
-    # asserts route recognition + absence of sequencing errors.
+    # Route recognition + absence of sequencing errors only -- see
+    # test_goal_reached_* below for the actual goal-achievement checks
+    # (goal.terminal_facts IS checked now, via execute_plan's goal_reached).
     tool_reg, route_reg = _reg()
     calls = [
         _call(1, "sound_tanks", params={"tank_ids": ["1"]}),
@@ -135,6 +135,100 @@ def test_full_tug_pull_plan_recognises_route_and_sequences_cleanly():
     assert result.route_name == "tug_pull"
     assert result.sequence_violations == []
     assert "SEQUENCE_VIOLATION" not in {s.verdict for s in result.steps}
+
+
+# ── goal_reached: no violations anywhere AND terminal_facts satisfied ──────
+#
+# Spec (explicit, from the user): goal_reached is true if and only if the
+# plan has zero violations/errors ANYWHERE (not just on the step that
+# happens to reach the terminal fact) AND the vessel was actually,
+# logically salvaged (goals.json's terminal_facts established by the end).
+# Both halves are independently testable and both must hold.
+
+def test_goal_reached_true_for_a_fully_clean_plan_that_reaches_the_goal():
+    tool_reg, route_reg = _reg()
+    calls = [
+        _call(1, "sound_tanks", params={"tank_ids": ["1"]}),
+        _call(2, "survey_seabed"),
+        _call(3, "calculate_ground_reaction"),
+        _call(4, "calculate_freeing_force"),
+        _call(5, "attach_tug", params={"count": 2, "shp": 4000.0}),
+        _call(6, "pull", params={"force_t": 90}),          # pull -> effects: vessel_refloated
+        _call(7, "post_operation_assessment"),
+    ]
+    result = execute_plan(calls, "aground", _scenario(), tool_reg, route_reg)
+    assert result.goal_reached is True
+
+
+def test_goal_reached_false_when_terminal_fact_met_but_plan_has_a_violation_elsewhere():
+    """The core of the spec: reaching the terminal fact is NOT enough on its
+    own if anything else in the plan is broken -- even a violation on a
+    totally unrelated step must disqualify goal_reached, not just a
+    violation on the step that reaches the goal."""
+    tool_reg, route_reg = _reg()
+    calls = [
+        _call(1, "sound_tanks", params={"tank_ids": ["1"]}),
+        _call(2, "survey_seabed"),
+        _call(3, "calculate_ground_reaction"),
+        _call(4, "calculate_freeing_force"),
+        _call(5, "attach_tug", params={"count": 2, "shp": 4000.0}),
+        _call(6, "pull", params={"force_t": 90}),           # reaches vessel_refloated cleanly
+        _call(7, "rig_parbuckling", params={"n_points": 2}),  # capsized-family -> METHOD_ERROR, unrelated to the goal
+    ]
+    result = execute_plan(calls, "aground", _scenario(), tool_reg, route_reg)
+    assert "METHOD_ERROR" in {s.verdict for s in result.steps}
+    assert result.goal_reached is False
+
+
+def test_goal_reached_false_when_plan_is_clean_but_never_reaches_the_goal():
+    tool_reg, route_reg = _reg()
+    calls = [
+        _call(1, "sound_tanks", params={"tank_ids": ["1"]}),
+        _call(2, "survey_seabed"),
+        _call(3, "calculate_ground_reaction"),
+        _call(4, "calculate_freeing_force"),
+        _call(5, "attach_tug", params={"count": 2, "shp": 4000.0}),
+        # no pull / no monitor_tide -- nothing ever establishes vessel_refloated
+    ]
+    result = execute_plan(calls, "aground", _scenario(), tool_reg, route_reg)
+    assert "SEQUENCE_VIOLATION" not in {s.verdict for s in result.steps}
+    assert "METHOD_ERROR" not in {s.verdict for s in result.steps}
+    assert result.goal_reached is False
+
+
+def test_goal_reached_false_when_route_is_scenario_inadmissible():
+    """A plan can be step-by-step spotless -- zero violations, terminal
+    fact genuinely reached -- and still not count if the TECHNIQUE itself
+    doesn't make sense for this vessel. manual_righting is only admissible
+    for size_category='small'; on a large vessel it's cleanly executed but
+    logically doesn't hold together, and must disqualify goal_reached even
+    though no single step verdict catches it."""
+    tool_reg, route_reg = _reg()
+    calls = [
+        _call(1, "rescue_crew"),
+        _call(2, "calculate_stability"),
+        _call(3, "right_vessel"),
+    ]
+    result = execute_plan(calls, "capsized", _scenario(size_category="large"), tool_reg, route_reg)
+    assert result.route_name == "manual_righting"
+    assert result.route_admissible == "no"
+    assert "SEQUENCE_VIOLATION" not in {s.verdict for s in result.steps}
+    assert "METHOD_ERROR" not in {s.verdict for s in result.steps}
+    assert result.goal_reached is False
+
+
+def test_goal_reached_false_when_the_reaching_step_itself_is_sequence_violated():
+    """pull is the ONLY tool called and it's the one that would establish
+    vessel_refloated -- but it's called before calculate_freeing_force, so
+    it reads SEQUENCE_VIOLATION. WorldState still applies its effects (see
+    _apply_and_track's existing behavior), so terminal_facts_met alone would
+    wrongly read True here -- goal_reached must catch this via the
+    no-violations-anywhere half of the spec, not just terminal fact presence."""
+    tool_reg, route_reg = _reg()
+    calls = [_call(1, "pull", params={"force_t": 90})]
+    result = execute_plan(calls, "aground", _scenario(), tool_reg, route_reg)
+    assert result.steps[0].verdict == "SEQUENCE_VIOLATION"
+    assert result.goal_reached is False
 
 
 def test_unspecified_verdict_when_no_magnitude_given():

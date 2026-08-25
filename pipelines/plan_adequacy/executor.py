@@ -76,6 +76,11 @@ STEP_VERDICTS = (
 )
 PLAN_VERDICTS = ("NO_RECOGNISABLE_ROUTE", "ROUTE_INADMISSIBLE", "ROUTE_OK")
 
+#: Verdicts that disqualify a step from counting as "done cleanly" --
+#: shared by route_completeness and goal_reached below, so the two can't
+#: silently drift apart on what counts as a problem.
+BAD_VERDICTS = frozenset({"SEQUENCE_VIOLATION", "METHOD_ERROR", "CONDITIONAL_UNRESOLVED", "NO_MATCH"})
+
 
 @dataclass
 class StepResult:
@@ -105,6 +110,7 @@ class PlanResult:
     gate_rate: int
     unresolved_gate_count: int
     self_contradictory_on_size: bool
+    goal_reached: bool          # see execute_plan's goal_reached computation, below
 
     def summary(self) -> dict:
         counts = {}
@@ -126,6 +132,7 @@ class PlanResult:
             "gate_rate": self.gate_rate,
             "unresolved_gate_count": self.unresolved_gate_count,
             "self_contradictory_on_size": self.self_contradictory_on_size,
+            "goal_reached": self.goal_reached,
         }
 
 
@@ -282,10 +289,9 @@ def execute_plan(calls: list, casualty: str, scenario, tool_registry: ToolRegist
     # which is misleading in per_image.csv/summary.csv; see the code-review
     # finding this fixes.
     if match.route is not None and match.route.core_tools:
-        bad_verdicts = {"SEQUENCE_VIOLATION", "METHOD_ERROR", "CONDITIONAL_UNRESOLVED", "NO_MATCH"}
         ok_tools = {
             s.tool for s in step_results
-            if s.tool in match.route.core_tools and s.verdict not in bad_verdicts
+            if s.tool in match.route.core_tools and s.verdict not in BAD_VERDICTS
         }
         route_completeness = len(ok_tools) / len(match.route.core_tools)
 
@@ -320,6 +326,26 @@ def execute_plan(calls: list, casualty: str, scenario, tool_registry: ToolRegist
     gate_count = gates.gate_rate(plan_text) if plan_text else 0
     self_contra = gates.is_self_contradictory_on_size(plan_text) if plan_text else False
 
+    # goal_reached: true iff (a) NO step in the whole plan has a BAD_VERDICT
+    # -- not just the step that happens to establish the terminal fact, the
+    # entire plan -- (b) the chosen route is not scenario-inadmissible (a
+    # technique that reaches the terminal fact via an approach that doesn't
+    # actually make sense for THIS vessel is exactly the kind of "logically
+    # doesn't hold together" case that disqualifies, even though no single
+    # step verdict catches it -- e.g. manual_righting reaching
+    # vessel_righted cleanly, on a vessel too large for manual righting to
+    # ever actually work), AND (c) the casualty's terminal_facts
+    # (goals.json) were actually established by the time every step has
+    # been applied. All three are required; a plan that reaches the
+    # terminal fact via a broken/out-of-order/wrong-family/inadmissible
+    # step does NOT count as having reached the goal, and a spotless plan
+    # that never actually gets there doesn't either.
+    goal = route_registry.goal_for(casualty)
+    no_bad_verdicts = not any(s.verdict in BAD_VERDICTS for s in step_results)
+    route_ok = route_adm != "no"
+    terminal_facts_met = bool(goal) and goal.terminal_facts <= (ws.known_facts() | ws.true_facts())
+    goal_reached = no_bad_verdicts and route_ok and terminal_facts_met
+
     return PlanResult(
         image=getattr(scenario, "image", ""), casualty=casualty, steps=step_results,
         route_name=route_name, route_score=route_score, route_admissible=route_adm,
@@ -328,4 +354,5 @@ def execute_plan(calls: list, casualty: str, scenario, tool_registry: ToolRegist
         unused_assessments=unused_assessments,
         gate_rate=gate_count, unresolved_gate_count=unresolved_gate_count,
         self_contradictory_on_size=self_contra,
+        goal_reached=goal_reached,
     )
