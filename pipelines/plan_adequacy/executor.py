@@ -17,6 +17,7 @@ section 4e): executor(calls) run on hand-written gold ToolCalls is
 "executor@model". The gap between the two IS the extraction loss.
 """
 
+import re
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -24,6 +25,42 @@ from pipelines.plan_adequacy import gates
 from pipelines.plan_adequacy.methods import RouteRegistry, admissible, recognise_route
 from pipelines.plan_adequacy.vocab import ToolRegistry
 from pipelines.plan_adequacy.worldstate import WorldState
+
+#: Matches a STANDALONE digit -- \b anchored, so it requires a non-word
+#: character (or string start) immediately before the digit. Plans in this
+#: corpus that DO state a magnitude write it numerically at a word boundary
+#: ("2 harbor tugs", "500 tons", "10 m draft"); deliberately permissive
+#: beyond that (no unit-word requirement) rather than a tight number+unit
+#: grammar. See the executor.py:219-224 fix in the P9 end-to-end-pipeline
+#: plan -- has_numeric_param used to be read from the model's EXTRACTED
+#: params dict, which calibration showed the extractor fills with invented
+#: values on a meaningful fraction of calls even after fixing the two real
+#: bugs behind null_fidelity (see calibrate.py's null_fidelity metric and
+#: extract.py's parse_extraction docstring). Every such invention silently
+#: flipped a step from UNSPECIFIED to SPECIFIED_UNGRADED, always in the
+#: direction of inflating apparent commitment. Reading straight from the
+#: step text makes that flip structurally impossible, regardless of
+#: extractor behavior on any given run.
+#:
+#: The \b anchor is load-bearing, not cosmetic: a plain r"\d" (no boundary)
+#: was tried first and FALSE-POSITIVED on "CO2" -- a term this exact
+#: corpus's fire-suppression tool family (release_co2) uses constantly.
+#: "O" and "2" are both \w characters, so there is no boundary between them
+#: and \bd correctly refuses to match the digit embedded inside "CO2",
+#: while still matching genuine standalone numbers ("2 tugs", "CO2 charge
+#: of 500 kg" -- the "500" still matches). Found on a recheck pass by
+#: running this regex against the 338-record gold set: 6 real release_co2
+#: gold steps mention "CO2" and correctly have NO expected_params, but the
+#: unanchored version would have marked all 6 as a false SPECIFIED_UNGRADED.
+#:
+#: Known remaining limitation (accepted, not fixed): a step that SPELLS OUT
+#: a quantity in words ("deploy two harbor tugs") is not detected -- only
+#: numerals are. Not attempting a word-number parser is deliberate: the
+#: gold-set params audit found 337/338 real steps state no magnitude at
+#: all, so this only matters for the rare step that both spells out a
+#: number AND has no other numeral anywhere else in the same sentence to
+#: fall back on.
+_DIGIT_RE = re.compile(r"\b\d")
 
 #: The seven-plus verdicts -- see salvage_plan_checker.md section 3 and 3a
 #: for the original six/seven-state design; NO_RECOGNISABLE_ROUTE and
@@ -216,10 +253,12 @@ def execute_plan(calls: list, casualty: str, scenario, tool_registry: ToolRegist
 
         # Default: quantified-vs-not. Numeric adequacy grading is phase 2
         # (physics.py) -- see module docstring.
-        has_numeric_param = any(
-            v is not None for k, v in c.params.items()
-            if spec.params.get(k, "").startswith(("int", "float"))
-        )
+        #
+        # has_numeric_param is read from the STEP TEXT, not from c.params --
+        # see the _DIGIT_RE module comment. A param the model extracted is
+        # never trusted on its own to prove a magnitude was actually stated;
+        # this makes UNSPECIFIED immune to the extractor inventing a value.
+        has_numeric_param = bool(_DIGIT_RE.search(c.step_text))
         wants_numeric = any(t.startswith(("int", "float")) for t in spec.params.values())
         if wants_numeric and not has_numeric_param:
             verdict, detail = "UNSPECIFIED", "No magnitude given; adequacy unverifiable."

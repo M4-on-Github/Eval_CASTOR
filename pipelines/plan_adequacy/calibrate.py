@@ -116,9 +116,19 @@ def score_record(gold: dict, predicted: ToolCall, parse_ok: bool) -> dict:
         "layer": gold.get("layer"),
         "failure_type": gold.get("failure_type"),
         "casualty": gold.get("casualty"),
+        # step_text rides along on every record (not just aggregated over)
+        # specifically so --dump-records / run_calibration's optional dump
+        # can go straight from a confusion pair or a failed null_check back
+        # to the sentence that produced it, without a second join against
+        # the gold file -- see the P9 end-to-end-pipeline plan, Part 1c
+        # ("example mining: numbers -> records"). aggregate()/stratify()
+        # ignore this key; it only matters to the dump path.
+        "step_text": gold.get("step_text"),
         "gold_tool": gold_tool,
         "predicted_tool": predicted.tool,
         "tool_correct": tool_correct,
+        "gold_params": gold_params,
+        "predicted_params": pred_params,
         "null_checks": null_checks,      # list[bool]
         "value_checks": value_checks,    # list[bool]
         "gold_conditional": gold_conditional,
@@ -256,8 +266,9 @@ def check_thresholds(headline_metrics: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 def run_calibration(model_key: str, model_dir: str, gold_path: Path,
-                     max_model_len: int = 4096, max_tokens: int = 256,
-                     limit: Optional[int] = None, raw_sample_size: int = 20) -> dict:
+                     max_model_len: int = 6144, max_tokens: int = 256,
+                     limit: Optional[int] = None, raw_sample_size: int = 20,
+                     dump_records: bool = False) -> dict:
     """Extract every gold step with the given model, score against gold,
     and return the full report (headline + per-layer + per-failure-type +
     per-casualty + threshold check). This is the only function in this
@@ -270,7 +281,15 @@ def run_calibration(model_key: str, model_dir: str, gold_path: Path,
     failures specifically -- added after a calibration run against
     llama_3_3_70b came back with 100% parse failure and nothing to inspect
     afterward (no exception anywhere in the vLLM logs, so the only way to
-    diagnose it is to actually look at what the model produced)."""
+    diagnose it is to actually look at what the model produced).
+
+    `dump_records`, if True, adds every score_record() row (not just the
+    aggregates) to the report under "scored_records" -- see the P9
+    end-to-end-pipeline plan, Part 1c ("example mining: numbers ->
+    records"). Without this, the calibration report has confusion COUNTS
+    (confusion_top) but no way to look at the actual sentences behind them;
+    main() writes this out as a separate JSONL, not embedded in the main
+    JSON report, so a normal calibration run's report stays small."""
     from pipelines.plan_adequacy.extract import (
         build_system_prompt, build_user_prompt, _run_vllm_batch, parse_extraction,
     )
@@ -303,7 +322,7 @@ def run_calibration(model_key: str, model_dir: str, gold_path: Path,
     headline = aggregate([s for s in scored if s["layer"] == HEADLINE_LAYER])
     thresholds = check_thresholds(headline)
 
-    return {
+    report = {
         "model": model_key,
         "model_dir": model_dir,
         "n_gold_used": len(gold_records),
@@ -315,6 +334,9 @@ def run_calibration(model_key: str, model_dir: str, gold_path: Path,
         "overall": aggregate(scored),
         "raw_failure_samples": raw_failure_samples,
     }
+    if dump_records:
+        report["scored_records"] = scored
+    return report
 
 
 # ---------------------------------------------------------------------------
@@ -328,18 +350,38 @@ def main():
     ap.add_argument("--gold", type=Path, default=GOLD_TOOL_CALLS_PATH)
     ap.add_argument("--out", type=Path, default=BASE_OUT_DIR / "calibration",
                      help="Output directory")
-    ap.add_argument("--max-model-len", type=int, default=4096)
+    ap.add_argument("--max-model-len", type=int, default=6144,
+                     help="Bumped from 4096 after the survey-tool disambiguation prompt fix pushed "
+                          "the system prompt to ~3800 of a 4096 budget -- ~260 tokens of margin was "
+                          "too tight, especially once max_tokens completion is added on top.")
     ap.add_argument("--max-tokens", type=int, default=256)
     ap.add_argument("--limit", type=int, default=None,
                      help="Smoke test: score only the first N gold records")
+    ap.add_argument("--dump-records", action="store_true",
+                     help="Also write records_<model>.jsonl: one row per scored "
+                          "gold record (step_text, gold/predicted tool, params, "
+                          "null_checks, ...) for example mining in the progress "
+                          "report -- see calibrate.py's run_calibration docstring.")
     args = ap.parse_args()
 
     report = run_calibration(args.model, args.model_dir, args.gold,
-                              args.max_model_len, args.max_tokens, args.limit)
+                              args.max_model_len, args.max_tokens, args.limit,
+                              dump_records=args.dump_records)
 
     args.out.mkdir(parents=True, exist_ok=True)
     out_path = args.out / f"calibration_{args.model}.json"
+    # scored_records is written to its own JSONL below, not embedded in the
+    # main report -- pop it here so a normal run's calibration_<model>.json
+    # doesn't balloon from ~50KB to ~ n_gold_used-times larger.
+    scored_records = report.pop("scored_records", None)
     out_path.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
+
+    if scored_records is not None:
+        records_path = args.out / f"records_{args.model}.jsonl"
+        with records_path.open("w", encoding="utf-8") as f:
+            for rec in scored_records:
+                f.write(json.dumps(rec, default=str) + "\n")
+        print(f"  Scored records written to {records_path} ({len(scored_records)} rows)")
 
     h = report["headline"]
     t = report["thresholds"]

@@ -7,11 +7,14 @@ both stages' artifacts, mirroring pipelines/salvage_analysis/paths.py:
     results/p9_plan_adequacy/
       answers_baseline/
         tool_calls.jsonl     <- Stage 1 (extract.py): one record per step
-        per_step.csv         <- Stage 2 (executor.py + aggregate.py)
+        per_step.csv         <- Stage 2 (run_executor.py + aggregate.py)
         per_image.csv        <- Stage 2
         summary.csv          <- Stage 2
+        report.md            <- Stage 2 (report.py)
+        case_studies.md       <- Stage 2 (report.py) -- record-level evidence
       answers_degf/
         ...
+    eval_summary_adequacy.csv  <- cumulative, one row appended per run (CUMULATIVE_SUMMARY_PATH)
 
 Inbox for run JSONLs is pipelines/plan_adequacy/inbox/, nested inside the
 package rather than a new top-level Eval_CASTOR/p9_.../ directory -- P9 is
@@ -47,6 +50,12 @@ ROBUSTNESS_TEMPLATES_PATH = CALIBRATION_DIR / "robustness_templates.json"
 #: executor@oracle validation -- see synthetic_calibration.jsonl in the plan.
 SYNTHETIC_CALIBRATION_PATH = EVAL_ROOT / "p8_to_check" / "synthetic_calibration.jsonl"
 
+#: Cross-run comparison, appended to across every run the same way
+#: aggregate_coherence.py appends to eval_summary_coherence.csv (P8's
+#: cumulative file sits at run_dir.parent, which for P9 is exactly
+#: BASE_OUT_DIR since every run's RunPaths.dir is BASE_OUT_DIR/run_name).
+CUMULATIVE_SUMMARY_PATH = BASE_OUT_DIR / "eval_summary_adequacy.csv"
+
 
 class RunPaths:
     """Every file P9 writes for one run.
@@ -64,6 +73,14 @@ class RunPaths:
     PER_STEP = "per_step.csv"
     PER_IMAGE = "per_image.csv"
     SUMMARY = "summary.csv"
+    #: Stage 2 (report.py) narrative outputs -- see the P9 end-to-end-
+    #: pipeline plan, Part 1 ("report.py") and Part 1c ("example mining").
+    #: report.md mirrors pipelines/plan_coherence/improved/eval/aggregate.py's
+    #: report.md; case_studies.md mirrors that same module's
+    #: write_case_studies() output -- the record-level evidence a report.md
+    #: claim can be traced back to.
+    REPORT = "report.md"
+    CASE_STUDIES = "case_studies.md"
 
     def __init__(self, run_name: str, base_dir: Path = None):
         self.run_name = run_name
@@ -93,6 +110,14 @@ class RunPaths:
     def summary(self) -> Path:
         return self._in_run(self.SUMMARY)
 
+    @property
+    def report(self) -> Path:
+        return self._in_run(self.REPORT)
+
+    @property
+    def case_studies(self) -> Path:
+        return self._in_run(self.CASE_STUDIES)
+
 
 # ── Compatibility facade ─────────────────────────────────────────────────────
 # The stage scripts call these directly.
@@ -115,3 +140,11 @@ def per_image_path(run_name: str) -> Path:
 
 def summary_path(run_name: str) -> Path:
     return RunPaths(run_name).summary
+
+
+def report_path(run_name: str) -> Path:
+    return RunPaths(run_name).report
+
+
+def case_studies_path(run_name: str) -> Path:
+    return RunPaths(run_name).case_studies

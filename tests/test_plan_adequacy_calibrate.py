@@ -90,6 +90,21 @@ def test_score_record_no_match_flags():
     assert s["predicted_is_no_match"] is True
 
 
+def test_score_record_carries_step_text_and_params_for_example_mining():
+    """Regression anchor for --dump-records (P9 end-to-end-pipeline plan,
+    Part 1c): score_record's output is what gets written to
+    records_<model>.jsonl, so a confusion pair or a failed null_check must
+    be traceable back to the actual sentence and both sides' params without
+    a second join against the gold file."""
+    gold = _gold(tool="attach_tug", params={"count": 2})
+    gold["step_text"] = "Deploy 2 harbor tugs."
+    call = _call(tool="attach_tug", params={"count": 2})
+    s = score_record(gold, call, parse_ok=True)
+    assert s["step_text"] == "Deploy 2 harbor tugs."
+    assert s["gold_params"] == {"count": 2}
+    assert s["predicted_params"] == {"count": 2}
+
+
 # ── aggregate ──────────────────────────────────────────────────────────────
 
 def test_aggregate_empty_returns_n_zero():

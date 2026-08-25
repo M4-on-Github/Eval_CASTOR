@@ -8,7 +8,7 @@ it, the same split assertion_coverage/check_assertions.py uses for
 IMPROVED_assertion_registry.csv via AssertionRegistry.load().
 
 Keeping the split matters here specifically because the registry is the
-biggest content-authoring surface in this pipeline (46 tools x their fact
+biggest content-authoring surface in this pipeline (47 tools x their fact
 sets) and needs to be editable without touching Python -- see
 salvage_plan_checker.md and the plan-adequacy design plan for the full
 rationale.
@@ -76,7 +76,7 @@ class ToolSpec:
 
 
 class ToolRegistry:
-    """All 46 tools, loaded from registry/tools.json.
+    """All 47 tools, loaded from registry/tools.json.
 
     Use ToolRegistry.load() rather than constructing directly -- the
     classmethod is what resolves the default path and does the JSON parse.
