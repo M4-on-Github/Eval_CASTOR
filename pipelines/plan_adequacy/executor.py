@@ -334,17 +334,23 @@ def execute_plan(calls: list, casualty: str, scenario, tool_registry: ToolRegist
     # doesn't hold together" case that disqualifies, even though no single
     # step verdict catches it -- e.g. manual_righting reaching
     # vessel_righted cleanly, on a vessel too large for manual righting to
-    # ever actually work), AND (c) the casualty's terminal_facts
-    # (goals.json) were actually established by the time every step has
-    # been applied. All three are required; a plan that reaches the
-    # terminal fact via a broken/out-of-order/wrong-family/inadmissible
-    # step does NOT count as having reached the goal, and a spotless plan
-    # that never actually gets there doesn't either.
+    # ever actually work), (c) NO step is UNSPECIFIED -- a step whose tool
+    # wants a magnitude and whose text never states one is not a decided
+    # action, it is a gesture at an action, and a plan that reaches
+    # vessel_righted via "parbuckle with floating cranes" without ever
+    # saying how many or rated to what has not demonstrated a salvage plan
+    # that holds together (this is the *decisive* half of "correct and
+    # decisive"; UNSPECIFIED deliberately stays OUT of BAD_VERDICTS, which
+    # route_completeness also consumes and which is about route execution,
+    # not magnitude), AND (d) the casualty's terminal_facts (goals.json)
+    # were actually established by the time every step has been applied.
+    # All four are required.
     goal = route_registry.goal_for(casualty)
     no_bad_verdicts = not any(s.verdict in BAD_VERDICTS for s in step_results)
     route_ok = route_adm != "no"
+    fully_specified = not any(s.verdict == "UNSPECIFIED" for s in step_results)
     terminal_facts_met = bool(goal) and goal.terminal_facts <= (ws.known_facts() | ws.true_facts())
-    goal_reached = no_bad_verdicts and route_ok and terminal_facts_met
+    goal_reached = no_bad_verdicts and route_ok and fully_specified and terminal_facts_met
 
     return PlanResult(
         image=getattr(scenario, "image", ""), casualty=casualty, steps=step_results,

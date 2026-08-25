@@ -16,7 +16,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from pipelines.plan_adequacy.executor import execute_plan
+from pipelines.plan_adequacy.executor import BAD_VERDICTS, execute_plan
 from pipelines.plan_adequacy.methods import RouteRegistry
 from pipelines.plan_adequacy.vocab import ToolCall, ToolRegistry
 from pipelines.plan_adequacy.worldstate import WorldState
@@ -152,12 +152,40 @@ def test_goal_reached_true_for_a_fully_clean_plan_that_reaches_the_goal():
         _call(2, "survey_seabed"),
         _call(3, "calculate_ground_reaction"),
         _call(4, "calculate_freeing_force"),
-        _call(5, "attach_tug", params={"count": 2, "shp": 4000.0}),
-        _call(6, "pull", params={"force_t": 90}),          # pull -> effects: vessel_refloated
+        # Magnitudes must appear in the STEP TEXT, not merely in the params
+        # dict -- specificity is derived from what the plan actually said, so
+        # that goal_reached cannot be satisfied by extractor-fabricated params.
+        _call(5, "attach_tug", text="Attach 2 tugs of 4000 shp each",
+              params={"count": 2, "shp": 4000.0}),
+        _call(6, "pull", text="Pull at 90 t bollard pull",
+              params={"force_t": 90}),                     # pull -> effects: vessel_refloated
         _call(7, "post_operation_assessment"),
     ]
     result = execute_plan(calls, "aground", _scenario(), tool_reg, route_reg)
     assert result.goal_reached is True
+
+
+def test_goal_reached_false_when_an_otherwise_clean_plan_leaves_a_step_unspecified():
+    """The 'decisive' half of the criterion. This plan has zero violations, an
+    admissible route, and establishes vessel_refloated -- but the two steps
+    that do the physical work never state a magnitude, so the plan gestures at
+    a salvage rather than specifying one. That must not count as reaching the
+    goal. (This is the real capsized/00195.jpg case in miniature: it passed on
+    structure alone while committing to no numbers.)"""
+    tool_reg, route_reg = _reg()
+    calls = [
+        _call(1, "sound_tanks", params={"tank_ids": ["1"]}),
+        _call(2, "survey_seabed"),
+        _call(3, "calculate_ground_reaction"),
+        _call(4, "calculate_freeing_force"),
+        _call(5, "attach_tug", text="Attach ocean-going salvage tugs"),
+        _call(6, "pull", text="Pull the vessel free with controlled force"),
+        _call(7, "post_operation_assessment"),
+    ]
+    result = execute_plan(calls, "aground", _scenario(), tool_reg, route_reg)
+    assert any(s.verdict == "UNSPECIFIED" for s in result.steps)
+    assert not any(s.verdict in BAD_VERDICTS for s in result.steps)
+    assert result.goal_reached is False
 
 
 def test_goal_reached_false_when_terminal_fact_met_but_plan_has_a_violation_elsewhere():
