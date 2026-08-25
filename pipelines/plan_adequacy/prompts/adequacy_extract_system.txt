@@ -11,7 +11,8 @@ Rules:
 5. If conditional, "condition_text" is the condition clause verbatim, and "condition_var" is whichever of these best names what the condition depends on: vessel_size, draft, substrate, depth, cargo_type, damage, none. Use "none" only when a genuine condition exists but doesn't map to any of these.
 6. A step describing meta-planning ("develop a plan that includes...") is "no_match" regardless of what equipment is mentioned inside the plan being described -- it commits to nothing yet.
 7. A step confirming personnel are clear "before activating" some suppression system is about the personnel confirmation, not the (not-yet-activated) suppression system -- the suppression tool belongs in secondary_tools, if anywhere.
-8. Routine monitoring, documentation, reporting, or coordination steps that name no equipment or technique from the allowed list are "no_match" -- do not force-fit the nearest-sounding tool onto a step just because it uses procedural language ("continue monitoring...", "document progress...", "coordinate with..."). If you cannot point to a specific allowed tool the step is actually invoking, the answer is "no_match".
+8. Routine monitoring, documentation, or reporting steps that name no equipment or technique from the allowed list are "no_match" -- do not force-fit the nearest-sounding tool onto a step just because it uses procedural language ("continue monitoring...", "document progress..."). If you cannot point to a specific allowed tool the step is actually invoking, the answer is "no_match". IMPORTANT: "coordinate with X to <do something>" is NOT automatically no_match -- if the "to ..." clause names a real action from the allowed list (per rule 1's purpose-clause handling), extract THAT tool. Only the coordination-with-no-follow-through case ("coordinate with relevant authorities and stakeholders" with no named technique) is no_match.
+9. A compound step that commits to ONE primary action unconditionally, then adds trailing sentences describing what to do IF a separate contingency arises later, is NOT conditional -- the primary action already happened; the trailing "if X, do Y" sentences describe a DIFFERENT possible future step, not a gate on this one. Only mark conditional when THIS step's own action is what's being withheld.
 
 Examples:
 
@@ -59,5 +60,11 @@ Step: "Deploy side-scan sonar equipment to search the debris field and locate th
 
 Step: "Continue monitoring weather and sea-state conditions throughout the operation and document progress with photographs for the incident report." (routine monitoring/documentation with no equipment or technique from the allowed list actually being applied -- no_match, even though "monitoring" sounds procedural)
 {"tool": "no_match", "params": {}, "secondary_tools": [], "conditional": false, "condition_text": null, "condition_var": "none"}
+
+Step: "Coordinate with a marine crane or floating crane vessel to provide additional lifting power, and position the crane to lift the vessel's stern or bow depending on the angle of grounding." (this "coordinate with..." step DOES name a real action in its "to ..." clause -- lifting the vessel -- so it is NOT no_match; rule 8's coordination-is-no_match case only applies when nothing concrete follows "coordinate with")
+{"tool": "lift", "params": {}, "secondary_tools": [], "conditional": false, "condition_text": null, "condition_var": "none"}
+
+Step: "Deploy salvage barges and heavy lifting equipment to position the vessel for stabilization. If the vessel is still partially afloat, use winches and anchors to secure it. If the vessel is in danger of sinking, prepare emergency ballast operations." (the FIRST sentence is an unconditional primary commitment -- deploying barges/lifting equipment now, for stabilization. The two trailing "If X, do Y" sentences describe separate contingency branches for LATER steps, not a gate on this one -- conditional stays false)
+{"tool": "lift", "params": {}, "secondary_tools": [], "conditional": false, "condition_text": null, "condition_var": "none"}
 
 Respond with a single JSON object matching the required schema. No explanation, no markdown fences.

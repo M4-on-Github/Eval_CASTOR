@@ -68,6 +68,7 @@ mkdir -p "$OUT_DIR"
 echo " Model dir : $MODEL_DIR"
 echo " Gold set  : $GOLD"
 echo " Output    : $OUT_DIR/calibration_${MODEL}.json"
+echo "             $OUT_DIR/records_${MODEL}.jsonl (--dump-records: per-example evidence for report.py)"
 echo "==========================================="
 
 apptainer exec \
@@ -88,7 +89,8 @@ apptainer exec \
         --model     "$MODEL" \
         --model-dir "$MODEL_DIR" \
         --gold      "$GOLD" \
-        --out       "$OUT_DIR"
+        --out       "$OUT_DIR" \
+        --dump-records
 
 EXIT_CODE=$?
 echo "==========================================="
