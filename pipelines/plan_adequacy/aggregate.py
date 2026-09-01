@@ -23,6 +23,7 @@ EVAL_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(EVAL_ROOT))
 
 from pipelines.plan_adequacy.classify import classify, is_cascade
+from pipelines.plan_adequacy.provenance import stamp
 from pipelines.plan_adequacy.executor import STEP_VERDICTS, PlanResult
 from pipelines.plan_adequacy.paths import CUMULATIVE_SUMMARY_PATH, RunPaths
 from pipelines.plan_adequacy.run_executor import run_executor
@@ -280,6 +281,15 @@ def aggregate_run(run_name: str, tool_calls_path: Path, out_dir: Path = None,
 
     results = run_executor(tool_calls_path, gt_path)
     print(f"  Executed {len(results)} plans")
+
+    # Stamp the run BEFORE writing any CSV, so a crash midway leaves a
+    # manifest recording what was attempted rather than an orphan directory
+    # of half-written numbers with no provenance. The run_id is derived from
+    # content, so it is identical whether stamped before or after.
+    manifest = stamp(run_name, paths.dir,
+                     extractor="", n_plans=len(results),
+                     input_path=tool_calls_path)
+    print(f"  Manifest  -> {paths.dir / 'manifest.json'}  (run_id {manifest['run_id']})")
 
     per_step_rows = build_per_step_rows(results)
     write_csv(paths.per_step, PER_STEP_FIELDNAMES, per_step_rows)
