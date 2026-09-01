@@ -297,8 +297,22 @@ def execute_plan(calls: list, casualty: str, scenario, tool_registry: ToolRegist
         # preconditions -- e.g. rig_parbuckling in an aground plan should
         # read as METHOD_ERROR, not SEQUENCE_VIOLATION for never having
         # rescued a crew that was never capsized in the first place.
+        #
+        # "universal" joins "assessment"/"terminal" as a family this check
+        # does not fire on. It exists because several tools were filed under
+        # the casualty whose ROUTE first cited them rather than the casualty
+        # they apply to, and the corpus made the consequence obvious: 24
+        # steps were flagged METHOD_ERROR for rescuing the crew off a vessel
+        # that was aground rather than capsized, because rescue_crew lived in
+        # the capsized family. Crew rescue, pollution containment, dewatering,
+        # tug assistance and sonar search are not casualty-specific methods.
+        # See registry/tools.json for the five reclassified entries and, just
+        # as importantly, for the ones deliberately left alone: right_vessel
+        # stays capsized, because sunken plans attempting to right a wreck are
+        # the STRATEGY_PERCEPTION signal and universalising it would erase the
+        # finding.
         if (not spec.is_assessment
-                and spec.family not in ("assessment", "terminal")
+                and spec.family not in ("assessment", "terminal", "universal")
                 and spec.family != casualty
                 and c.step_num not in repaired_steps):
             step_results.append(StepResult(

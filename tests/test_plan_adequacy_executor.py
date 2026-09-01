@@ -537,3 +537,54 @@ def test_a_vessel_size_threshold_does_not_rescue_an_otherwise_vague_step():
     by_n = {s.n: s.verdict for s in result.steps}
     assert by_n[5] == "UNSPECIFIED"
     assert by_n[6] == "UNSPECIFIED"
+
+
+# ── pass 6: universal families ───────────────────────────────────────────────
+# Five tools were filed under the casualty whose ROUTE first cited them rather
+# than the casualty they apply to. The corpus made the cost obvious: 24 steps
+# were flagged METHOD_ERROR for rescuing the crew off a vessel that happened to
+# be aground rather than capsized.
+
+def test_universal_tools_are_not_method_errors_on_any_casualty():
+    tool_reg, route_reg = _reg()
+    universal = ["rescue_crew", "dewater", "attach_tug", "deploy_boom", "sonar_search"]
+    for casualty in ("aground", "capsized", "on_fire", "sunken"):
+        for tool in universal:
+            result = execute_plan([_call(1, tool, text=f"Apply {tool} with 2 units")],
+                                  casualty, _scenario(), tool_reg, route_reg)
+            assert result.steps[0].verdict != "METHOD_ERROR", (
+                f"{tool} still reads as a method error on {casualty}")
+
+
+def test_righting_a_sunken_vessel_is_still_a_method_error():
+    """The load-bearing regression. right_vessel deliberately stays in the
+    capsized family: sunken plans that attempt to right a wreck are the
+    STRATEGY_PERCEPTION signal, and universalising it would erase the one
+    finding that survives the trust filter."""
+    tool_reg, route_reg = _reg()
+    result = execute_plan([_call(1, "right_vessel", text="Right the vessel at 1800 t",
+                                 params={"method": "parbuckling", "load_t": 1800.0})],
+                          "sunken", _scenario(), tool_reg, route_reg)
+    assert result.steps[0].verdict == "METHOD_ERROR"
+
+
+def test_monitor_tide_stays_aground_scoped():
+    """Its source is specifically ground reaction as the tide rises, so it is
+    genuinely aground-specific -- unlike the five reclassified tools."""
+    tool_reg, route_reg = _reg()
+    result = execute_plan([_call(1, "monitor_tide", text="Monitor the tide for 6 hours")],
+                          "on_fire", _scenario(), tool_reg, route_reg)
+    assert result.steps[0].verdict == "METHOD_ERROR"
+
+
+def test_every_registry_family_is_one_the_executor_understands():
+    """A typo in tools.json's family field would silently make a tool a
+    METHOD_ERROR on every casualty, which reads as a planner failure."""
+    from pipelines.plan_adequacy.vocab import ToolRegistry
+    reg = ToolRegistry.load()
+    allowed = {"assessment", "terminal", "universal",
+               "aground", "capsized", "on_fire", "sunken"}
+    names = reg.all_tool_names()
+    assert names, "registry loaded no tools"
+    for name in sorted(names):
+        assert reg.family(name) in allowed, f"{name}: unknown family {reg.family(name)}"
