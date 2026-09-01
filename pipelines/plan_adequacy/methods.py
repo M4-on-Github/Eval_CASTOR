@@ -197,8 +197,31 @@ def recognise_route(called_tools: set, casualty: str, registry: RouteRegistry) -
     return RouteMatch(route=best, score=best_score, matched_tools=best_matched, unmatched_tools=unmatched)
 
 
+#: How many tools distinctive to the foreign family a plan must call before
+#: it is judged to be solving a different accident. [AUTHORED]
+#:
+#: This is the most consequential free parameter in the diagnosis, and it was
+#: set by measurement rather than taste. Eight of the 24 routes have a SINGLE
+#: core tool (aground/tide_refloat, capsized/manual_righting,
+#: sunken/lift_bags_or_craft, ...), so any plan uttering that one tool scores
+#: a perfect 1.0 against that route and beats almost any partial match in its
+#: own family. At a threshold of 1, aground/00017 -- a recognisably aground
+#: plan that happens to mention "lift" and a cofferdam -- is called a sunken
+#: plan.
+#:
+#: Over the 330-plan corpus the threshold moves the STRATEGY_PERCEPTION class
+#: from 118 plans (35.8%) at 1 to 33 (10.0%) at 2. Both numbers should be
+#: reported as a sensitivity band until hand coding settles it. 2 is the
+#: default because the asymmetry of the error is not symmetric: a false
+#: perception finding points the whole research programme at visual grounding
+#: on the strength of a shared verb, while a missed one merely lands the plan
+#: in a neighbouring class.
+MIN_DISTINCTIVE_FOREIGN_TOOLS = 2
+
+
 def detect_perception_mismatch(called_tools: set, casualty: str,
-                                registry: RouteRegistry) -> Optional[str]:
+                                registry: RouteRegistry,
+                                min_distinctive: int = None) -> Optional[str]:
     """Does this plan fit some OTHER casualty's routes better than its own?
 
     Diagnostic overlay only -- this must never feed grading. recognise_route()
@@ -213,9 +236,14 @@ def detect_perception_mismatch(called_tools: set, casualty: str,
     reports/p9/redesign.tex.
 
     Returns the foreign casualty name when the plan's tools fit one of its
-    routes strictly better than anything in `casualty`'s own library (and
-    clear the recognition floor), else None.
+    routes strictly better than anything in `casualty`'s own library, clear
+    the recognition floor, and include at least `min_distinctive` tools that
+    appear in NO route of the plan's own casualty (default
+    MIN_DISTINCTIVE_FOREIGN_TOOLS -- see that constant for why this matters
+    more than any other parameter here).
     """
+    if min_distinctive is None:
+        min_distinctive = MIN_DISTINCTIVE_FOREIGN_TOOLS
     own_routes = registry.for_casualty(casualty)
     own_best = 0.0
     for route in own_routes:
@@ -240,7 +268,7 @@ def detect_perception_mismatch(called_tools: set, casualty: str,
                 continue
             matched = called_tools & route.core_tools
             score = len(matched) / len(route.core_tools)
-            if score > foreign_best and (matched - own_tools):
+            if score > foreign_best and len(matched - own_tools) >= min_distinctive:
                 foreign_best, foreign_casualty = score, other
 
     if foreign_best < RouteRegistry.RECOGNITION_FLOOR or foreign_best <= own_best:
