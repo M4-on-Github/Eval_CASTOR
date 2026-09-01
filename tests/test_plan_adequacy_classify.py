@@ -175,3 +175,44 @@ def test_cascade_is_false_when_the_earlier_failure_is_not_a_state_loss():
     # world state, so a later violation is not attributable to them.
     plan = _plan(["UNSPECIFIED", "CONDITIONAL_UNRESOLVED", "SEQUENCE_VIOLATION"])
     assert is_cascade(plan, 3) is False
+
+
+# ── the vocabulary gap, labelled not closed ──────────────────────────────────
+
+def test_no_match_category_labels_the_six_missing_capabilities():
+    from pipelines.plan_adequacy.classify import no_match_category as cat
+    cases = {
+        "Establish a safety perimeter using buoys and warning flares": "site_control",
+        "Coordinate with local maritime authorities and port control": "liaison",
+        "Install temporary mooring lines from the beach to the bow": "temporary_stabilisation",
+        "Monitor weather and sea state continuously during the lift": "ongoing_monitoring",
+        "Mobilize appropriate salvage equipment including heavy tugs": "logistics",
+        "Document the operation and report for insurance purposes": "documentation",
+    }
+    for text, expected in cases.items():
+        assert cat(text, "NO_MATCH") == expected, text
+
+
+def test_unmatched_steps_fall_to_the_honest_residual():
+    from pipelines.plan_adequacy.classify import UNCATEGORISED, no_match_category
+    assert no_match_category("Deploy divers to cut the anchor chain", "NO_MATCH") == UNCATEGORISED
+
+
+def test_category_is_empty_for_any_graded_step():
+    """The column must not invite the reading that a graded step was also
+    'really' something else."""
+    from pipelines.plan_adequacy.classify import no_match_category as cat
+    for verdict in ("SPECIFIED_UNGRADED", "UNSPECIFIED", "METHOD_ERROR",
+                    "SEQUENCE_VIOLATION", "CONDITIONAL_UNRESOLVED"):
+        assert cat("Establish a safety perimeter", verdict) == ""
+
+
+def test_categorising_cannot_change_a_diagnosis():
+    """The leak guard. no_match_category is a label on rows that already
+    exist; if adding it can move a class or an EPL it has reached into
+    grading, and every before/after comparison in the write-up is void."""
+    plan = _plan(["NO_MATCH", "SPECIFIED_UNGRADED"] + _CLEAN[:4])
+    baseline = classify(plan)
+    for step in plan.steps:
+        step.text = "Establish a safety perimeter and coordinate with authorities"
+    assert classify(plan) == baseline

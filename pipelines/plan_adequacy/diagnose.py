@@ -76,6 +76,25 @@ DIRECTIONS = {
 }
 
 
+def no_match_breakdown(per_step_paths) -> dict:
+    """{category: n} over every NO_MATCH step, plus the total.
+
+    Reported beside the diagnosis table because PROCEDURE's 0% planner
+    attribution is otherwise just a number: this says what those steps are
+    actually reaching for. The registry has no vocabulary for them and
+    deliberately still does not -- see classify.no_match_category.
+    """
+    counts = Counter()
+    total = 0
+    for path in per_step_paths:
+        with open(path, newline="", encoding="utf-8") as f:
+            for r in csv.DictReader(f):
+                if r.get("verdict") == "NO_MATCH":
+                    total += 1
+                    counts[r.get("no_match_category") or "other"] += 1
+    return {"counts": dict(counts), "total": total}
+
+
 def rows_from_per_image(path: Path) -> list:
     """Read the diagnosis fields back out of an aggregate.py per_image.csv.
 
@@ -187,6 +206,7 @@ def main():
             repair_rows += run_repairs(base / run / "tool_calls.jsonl",
                                        Path(args.gt) if args.gt else None)
 
+    gap = no_match_breakdown([base / r / "per_step.csv" for r in args.runs])
     deltas = delta_epl_by_class(repair_rows) if repair_rows else None
     recalls = recall_by_class(run_injections()) if args.recall else None
     table = build_diagnosis(rows, deltas, recalls)
@@ -196,6 +216,15 @@ def main():
     print(f"\nmean EPL = {sum(epls)/len(epls):.2f} of 6   "
           f"({zeros}/{len(epls)} = {zeros/len(epls)*100:.0f}% of plans at 0)\n")
     print(_fmt_table(table))
+
+    if gap["total"]:
+        print(f"\nNO_MATCH = {gap['total']} steps: what the registry cannot express")
+        named = sum(v for k, v in gap["counts"].items() if k != "other")
+        for cat, n in sorted(gap["counts"].items(), key=lambda kv: -kv[1]):
+            tag = "   <- honest residual" if cat == "other" else ""
+            print(f"  {cat:<26} {n:>4}  ({n / gap['total'] * 100:>4.0f}%){tag}")
+        print(f"  {'--- named capabilities':<26} {named:>4}  "
+              f"({named / gap['total'] * 100:>4.0f}%)")
 
     if repair_rows:
         print("\nfirst-repair transitions (repaired class -> what failed next):")

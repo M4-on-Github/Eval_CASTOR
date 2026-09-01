@@ -37,6 +37,7 @@ prevalence understates COMMITMENT. hazard.py exists to correct exactly this
 and must be read alongside any prevalence table produced from here.
 """
 
+import re
 from typing import Optional
 
 from pipelines.plan_adequacy.executor import BAD_VERDICTS
@@ -195,3 +196,71 @@ def is_cascade(plan, step_n: int) -> bool:
         if step.verdict in ("NO_MATCH", "METHOD_ERROR"):
             return True
     return False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  What the registry cannot express
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# NO_MATCH is 385 of 1,980 steps -- 19% of everything these plans say. Reading
+# them, 74% fall into six recurring capabilities the registry has no vocabulary
+# for: its 47 tools are technical actions plus assessments, and a real salvage
+# plan is substantially operational scaffolding. "Establish a safety perimeter"
+# alone accounts for 83 steps.
+#
+# The obvious move -- add six tools and close the gap -- was considered and
+# REJECTED. Tools with no effects and no route participation would convert those
+# steps from NO_MATCH to SPECIFIED_UNGRADED, dropping PROCEDURE and lifting EPL
+# without a single plan becoming one step more executable. That is the same
+# direction of error as the incidental-digit bug: it flatters the planner.
+# NO_MATCH currently says, honestly, "the registry cannot express this";
+# afterwards it would say "fine".
+#
+# The gap is a finding, not a defect to paper over. So it gets labelled here
+# instead, at analysis time, on rows that already exist. This function MUST NOT
+# affect any verdict, class or EPL -- there is a test asserting exactly that.
+
+#: Ordered, because a step can match more than one pattern and the first hit
+#: wins; earlier entries are the more specific readings. Patterns were written
+#: against the corpus and their coverage measured, not guessed.
+NO_MATCH_CATEGORIES = (
+    ("site_control",
+     r"perimeter|exclusion zone|safety zone|secure the (scene|site|area)"
+     r"|restrict access|cordon|keep (unauthorized|unauthorised)"),
+    ("liaison",
+     r"coordinat\w+ with|notify|liaise|contact (local|the) (authorit|port|coast)"
+     r"|in (consultation|conjunction) with"),
+    ("temporary_stabilisation",
+     r"install temporary|temporary (mooring|ballast|bulkhead|barrier|pontoon)"
+     r"|shore up|cribbing"),
+    ("ongoing_monitoring",
+     r"monitor (the )?(weather|sea state|vessel|conditions|stability)"
+     r"|continuous(ly)? monitor|keep under observation"),
+    ("logistics",
+     r"mobili[sz]e|arrange for|procure|stage (the )?equipment"),
+    ("documentation",
+     r"document|report for (regulatory|insurance)|final inspection"
+     r"|post-salvage inspection|record keeping"),
+)
+
+_NO_MATCH_RE = tuple((name, re.compile(pat, re.I)) for name, pat in NO_MATCH_CATEGORIES)
+
+#: What a step gets when none of the six patterns fit. These are the honest
+#: residual -- what these plans contain that neither the registry nor this
+#: categorisation can express -- and their size is the number worth reporting.
+UNCATEGORISED = "other"
+
+
+def no_match_category(step_text: str, verdict: str = "NO_MATCH") -> str:
+    """Which missing capability a NO_MATCH step is reaching for.
+
+    Returns "" for any step that is not NO_MATCH, so the column stays empty
+    rather than inviting the reading that a graded step was also "really"
+    something else.
+    """
+    if verdict != "NO_MATCH":
+        return ""
+    for name, rx in _NO_MATCH_RE:
+        if rx.search(step_text or ""):
+            return name
+    return UNCATEGORISED

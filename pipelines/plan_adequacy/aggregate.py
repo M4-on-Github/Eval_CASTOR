@@ -22,7 +22,8 @@ from typing import Optional
 EVAL_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(EVAL_ROOT))
 
-from pipelines.plan_adequacy.classify import classify, is_cascade
+from pipelines.plan_adequacy.classify import (classify, is_cascade,
+                                              no_match_category)
 from pipelines.plan_adequacy.provenance import stamp
 from pipelines.plan_adequacy.executor import STEP_VERDICTS, PlanResult
 from pipelines.plan_adequacy.paths import CUMULATIVE_SUMMARY_PATH, RunPaths
@@ -67,12 +68,16 @@ def build_per_step_rows(results: list) -> list:
                 # appears to violate. A column rather than a post-hoc script so
                 # the cascade claim is checkable against the data.
                 "is_cascade": is_cascade(r, s.n),
+                # Which missing capability a NO_MATCH step reaches for.
+                # Label only -- see classify.no_match_category for why the
+                # gap is reported rather than closed.
+                "no_match_category": no_match_category(s.text, s.verdict),
             })
     return rows
 
 
 PER_STEP_FIELDNAMES = ["image", "casualty", "step_num", "step_text", "tool", "verdict",
-                        "detail", "conditional", "is_cascade"]
+                        "detail", "conditional", "is_cascade", "no_match_category"]
 
 
 # ---------------------------------------------------------------------------
