@@ -17,10 +17,18 @@ that pass, sort by delta EPL. If the pre-execution rows dominate, the
 bottleneck is upstream of planning entirely (perception, or route vocabulary)
 and no amount of sequencing work will move the number.
 
-Recall and % planner are NOT computed here: they come from the injection study
-(inject.py) and from hand adjudication respectively, and are merged in when
-those exist. Until then they print as "--", which is the honest rendering --
-an unvalidated prevalence number should look unvalidated.
+Recall comes from the injection study (inject.py) and is merged in with
+--recall. % planner comes from hand adjudication and does not exist yet; it
+prints as "--", which is the honest rendering -- an unattributed prevalence
+number should look unattributed.
+
+A caution that belongs next to the recall column wherever it is read: recall
+is measured on SYNTHETIC single-defect plans built from clean bases. It
+establishes that the checker can tell the classes apart when exactly one
+defect is present, which is a necessary condition and not a sufficient one.
+Real plans carry several defects at once, and the class the checker reports
+is then the first in precedence order rather than the only one available. A
+recall of 1.00 here is a floor on trust, not a guarantee of it.
 
 Usage:
     python -m pipelines.plan_adequacy.diagnose \\
@@ -41,6 +49,7 @@ from pipelines.plan_adequacy.classify import (FAILURE_CLASSES,
                                               PRE_EXECUTION_CLASSES, classify)
 from pipelines.plan_adequacy.hazard import (hazard_rank, hazard_table,
                                             mean_epl_by_class, prevalence)
+from pipelines.plan_adequacy.inject import recall_by_class, run_injections
 from pipelines.plan_adequacy.methods import RouteRegistry
 from pipelines.plan_adequacy.repair import (delta_epl_by_class,
                                             repair_to_exhaustion,
@@ -90,18 +99,21 @@ def rows_from_per_image(path: Path) -> list:
     return out
 
 
-def build_diagnosis(rows: list, deltas: dict = None) -> list:
-    """The table. `deltas` is delta_epl_by_class() output, or None when the
-    repair pass has not been run."""
+def build_diagnosis(rows: list, deltas: dict = None, recalls: dict = None) -> list:
+    """The table. `deltas` is delta_epl_by_class() output and `recalls` is
+    recall_by_class() output; either may be None when that pass has not run,
+    in which case the column prints "--" rather than a placeholder number."""
     prev = prevalence(rows)
     ranks = hazard_rank(rows)
     means = mean_epl_by_class(rows)
     deltas = deltas or {}
+    recalls = recalls or {}
 
     table = []
     for cls in FAILURE_CLASSES:
         mean = means[cls]
         delta = deltas.get(cls, {}).get("mean_delta_epl")
+        recall = recalls.get(cls, {}).get("recall")
         table.append({
             "failure_class": cls,
             "n": prev[cls]["n"],
@@ -113,7 +125,7 @@ def build_diagnosis(rows: list, deltas: dict = None) -> list:
             # None where EPL is structural -- averaging a definition
             # produces a number that looks like evidence.
             "mean_epl": "--" if mean is None else round(mean, 2),
-            "recall": "--",        # inject.py, not yet run
+            "recall": "--" if recall is None else round(recall, 2),
             "pct_planner": "--",   # hand adjudication, not yet run
             "delta_epl": "--" if delta is None else round(delta, 2),
             "direction": DIRECTIONS.get(cls, "--"),
@@ -162,6 +174,8 @@ def main():
     ap.add_argument("--gt", default=None, help="ground-truth CSV (scenario lookup)")
     ap.add_argument("--repair", action="store_true",
                     help="also run the neutralise-and-continue repair pass")
+    ap.add_argument("--recall", action="store_true",
+                    help="also run the injection study and fill the recall column")
     ap.add_argument("--out", default=None, help="write the table to this CSV")
     args = ap.parse_args()
 
@@ -174,7 +188,8 @@ def main():
                                        Path(args.gt) if args.gt else None)
 
     deltas = delta_epl_by_class(repair_rows) if repair_rows else None
-    table = build_diagnosis(rows, deltas)
+    recalls = recall_by_class(run_injections()) if args.recall else None
+    table = build_diagnosis(rows, deltas, recalls)
 
     epls = [r["epl"] for r in rows]
     zeros = sum(1 for e in epls if e == 0)
