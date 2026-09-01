@@ -488,3 +488,52 @@ def test_summary_returns_expected_keys():
     for key in ("image", "casualty", "route_name", "counts", "gate_rate",
                 "unresolved_gate_count", "self_contradictory_on_size"):
         assert key in summary
+
+
+# ── specificity: incidental digits ───────────────────────────────────────────
+# Added after a census over the corpus found that ALL 17 SPECIFIED_UNGRADED
+# steps on numeric-param tools were credited on a digit belonging to something
+# other than the action -- mostly a vessel-size threshold quoted out of the
+# prompt's own assertion block, which meant the proxy was partly measuring the
+# PROMPT rather than the plan.
+
+def test_real_action_magnitudes_still_count_as_specified():
+    from pipelines.plan_adequacy.executor import states_magnitude
+    for text in ["Pull at 90 t bollard pull",
+                 "Attach 2 tugs of 4000 shp each",
+                 "Release the 1200 kg CO2 bank into the space",
+                 "Dewater the engine room at 400 m3/h",
+                 "Rig 6 parbuckling points rated 900 t each"]:
+        assert states_magnitude(text) is True, text
+
+
+def test_incidental_digits_do_not_count_as_a_stated_magnitude():
+    from pipelines.plan_adequacy.executor import states_magnitude
+    for text in ["Given its apparent size (>50 m), remove weight from the aft",
+                 "If the vessel is a deep-draft vessel (>10 m draft), dredge",
+                 "If the substrate is soft, proceed to step 4",
+                 "Confirm pump capacity, as per ON FIRE assertion #5",
+                 "Ensure tugs are rated for the vessel (100,000 DWT)",
+                 "Given its likely length over 50 meters, lighter the vessel"]:
+        assert states_magnitude(text) is False, text
+
+
+def test_a_vessel_size_threshold_does_not_rescue_an_otherwise_vague_step():
+    """The whole failure mode in one case: the assertion block injects
+    ">50 m" into the plan, and that phrase alone used to flip a step from
+    UNSPECIFIED to SPECIFIED."""
+    tool_reg, route_reg = _reg()
+    calls = [
+        _call(1, "sound_tanks", text="Sound the tanks", params={"tank_ids": ["1"]}),
+        _call(2, "survey_seabed", text="Survey the seabed"),
+        _call(3, "calculate_ground_reaction", text="Calculate ground reaction"),
+        _call(4, "calculate_freeing_force", text="Calculate freeing force"),
+        _call(5, "attach_tug",
+              text="Since the vessel is >50 m, deploy ocean-going salvage tugs",
+              params={"count": 2}),
+        _call(6, "pull", text="Apply controlled pulling force", params={"force_t": 90}),
+    ]
+    result = execute_plan(calls, "aground", _scenario(), tool_reg, route_reg)
+    by_n = {s.n: s.verdict for s in result.steps}
+    assert by_n[5] == "UNSPECIFIED"
+    assert by_n[6] == "UNSPECIFIED"

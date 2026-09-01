@@ -63,6 +63,50 @@ from pipelines.plan_adequacy.worldstate import WorldState
 #: fall back on.
 _DIGIT_RE = re.compile(r"\b\d")
 
+#: Digits that are NOT an action magnitude, stripped before _DIGIT_RE runs.
+#:
+#: Added after a census, not a hunch. Every SPECIFIED_UNGRADED step in the
+#: corpus that sits on a tool declaring a numeric parameter -- all 17 of them
+#: -- was credited on a digit that had nothing to do with the action:
+#:
+#:   * a vessel-size or draft threshold quoted straight out of the prompt's
+#:     assertion block (">50 m", ">10 m draft", "100,000 DWT"). This is by far
+#:     the biggest source, and it is an artefact of the experiment itself: the
+#:     assertion arms inject these phrases into the plan, so the proxy was
+#:     partly measuring the PROMPT rather than the plan;
+#:   * a cross-reference to another step ("proceed to step 4");
+#:   * a cross-reference to an assertion ("per ON FIRE assertion #5").
+#:
+#: So the positive direction of the digit rule had precision 0.00 on this
+#: corpus: not one step actually stated a magnitude for the action it was
+#: describing. That is consistent with the independent gold-set audit finding
+#: that 337 of 338 real steps state no magnitude, and it means UNSPECIFIED was
+#: systematically UNDER-counted -- the error ran in the direction of
+#: flattering the planner, which is the direction that matters.
+#:
+#: Deliberately conservative: only these patterns are stripped, all of them
+#: cross-references or vessel attributes rather than action quantities. A step
+#: that says "pull at 90 t" or "2 tugs of 4000 shp" still reads as specified,
+#: because nothing here touches it.
+_INCIDENTAL_DIGIT_RE = re.compile(
+    r"[<>]\s*\d[\d,.]*\s*(?:m|meters?|metres?)\b"        # ">50 m"
+    r"|\bover\s+\d[\d,.]*\s*(?:m|meters?|metres?)\b"    # "over 50 meters"
+    r"|\b\d[\d,.]*\s*(?:m|meters?|metres?)\s+draft\b"   # "10 m draft"
+    r"|\b\d[\d,.]*\s*DWT\b"                            # "100,000 DWT"
+    r"|\bsteps?\s*#?\s*\d+"                              # "step 4"
+    r"|\bassertions?\s*#?\s*\d+"                         # "assertion #5"
+    r"|#\s*\d+",                                          # "#3"
+    re.IGNORECASE)
+
+
+def states_magnitude(step_text: str) -> bool:
+    """Does this step state a magnitude for its OWN action?
+
+    Incidental digits are stripped first -- see _INCIDENTAL_DIGIT_RE for the
+    census that motivated it.
+    """
+    return bool(_DIGIT_RE.search(_INCIDENTAL_DIGIT_RE.sub(" ", step_text)))
+
 #: The seven-plus verdicts -- see salvage_plan_checker.md section 3 and 3a
 #: for the original six/seven-state design; NO_RECOGNISABLE_ROUTE and
 #: ROUTE_INADMISSIBLE are plan-level additions from the route-scoped model
@@ -292,7 +336,7 @@ def execute_plan(calls: list, casualty: str, scenario, tool_registry: ToolRegist
         # see the _DIGIT_RE module comment. A param the model extracted is
         # never trusted on its own to prove a magnitude was actually stated;
         # this makes UNSPECIFIED immune to the extractor inventing a value.
-        has_numeric_param = bool(_DIGIT_RE.search(c.step_text))
+        has_numeric_param = states_magnitude(c.step_text)
         wants_numeric = any(t.startswith(("int", "float")) for t in spec.params.values())
         if wants_numeric and not has_numeric_param and c.step_num not in repaired_steps:
             verdict, detail = "UNSPECIFIED", "No magnitude given; adequacy unverifiable."

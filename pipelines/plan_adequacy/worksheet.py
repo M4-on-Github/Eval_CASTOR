@@ -340,15 +340,36 @@ def items_perception(per_image, per_step, n=40, run_dirs=()):
     return out
 
 
-def items_magnitude(per_step, n=60):
-    """Half the sample from steps the checker called UNSPECIFIED, half from
-    SPECIFIED_UNGRADED. A sample drawn only from one side would measure recall
-    or precision but never both, and the proxy can fail in either direction --
-    "two 4-hour shifts" counts as a magnitude, "maximum available pump
-    capacity" does not."""
+def _wants_numeric(tool, tool_registry):
+    if not tool_registry.has(tool):
+        return False
+    return any(t.startswith(("int", "float"))
+               for t in tool_registry.spec(tool).params.values())
+
+
+def items_magnitude(per_step, n=60, tool_registry=None):
+    """Half from steps the checker called UNSPECIFIED, half from
+    SPECIFIED_UNGRADED. Both halves, because the proxy can fail in either
+    direction and a one-sided sample measures recall or precision but never
+    both: "at least two tugboats" states a count the digit rule misses, while
+    a step whose only digit is ">50 m" of vessel size gets credited with an
+    action magnitude it never stated.
+
+    BOTH halves are restricted to tools that actually declare a numeric
+    parameter. Without that restriction the SPECIFIED half is useless: a first
+    version drew it from all tools and 29 of 30 items landed on assessment and
+    terminal tools (survey_hull, post_operation_assessment, ...) which take no
+    magnitude at all, so the question "does this commit a quantity" was vacuous
+    for all but one item. UNSPECIFIED can only fire on a numeric-param tool, so
+    that half was always in scope; only the SPECIFIED side was leaking.
+    """
+    from pipelines.plan_adequacy.vocab import ToolRegistry
+    tool_registry = tool_registry or ToolRegistry.load()
     out = []
     for verdict, share in (("UNSPECIFIED", n // 2), ("SPECIFIED_UNGRADED", n - n // 2)):
-        rows = [r for r in per_step if r["verdict"] == verdict and r["tool"] != "no_match"]
+        rows = [r for r in per_step
+                if r["verdict"] == verdict and r["tool"] != "no_match"
+                and _wants_numeric(r["tool"], tool_registry)]
         for r in _every_kth(rows, share, key=lambda r: (r["_key"], int(r["step_num"]))):
             out.append({"id": f'{r["_key"]}#{r["step_num"]}',
                         "text": r["step_text"],
