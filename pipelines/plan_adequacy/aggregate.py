@@ -22,6 +22,7 @@ from typing import Optional
 EVAL_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(EVAL_ROOT))
 
+from pipelines.plan_adequacy.classify import classify, is_cascade
 from pipelines.plan_adequacy.executor import STEP_VERDICTS, PlanResult
 from pipelines.plan_adequacy.paths import CUMULATIVE_SUMMARY_PATH, RunPaths
 from pipelines.plan_adequacy.run_executor import run_executor
@@ -60,12 +61,17 @@ def build_per_step_rows(results: list) -> list:
                 "verdict": s.verdict,
                 "detail": s.detail,
                 "conditional": s.conditional,
+                # Suspect-observation flag, not a confirmed one: an earlier
+                # extraction failure can strip a fact a later good step then
+                # appears to violate. A column rather than a post-hoc script so
+                # the cascade claim is checkable against the data.
+                "is_cascade": is_cascade(r, s.n),
             })
     return rows
 
 
 PER_STEP_FIELDNAMES = ["image", "casualty", "step_num", "step_text", "tool", "verdict",
-                        "detail", "conditional"]
+                        "detail", "conditional", "is_cascade"]
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +130,14 @@ def _flatten_plan_row(result: PlanResult) -> dict:
         "unresolved_gate_count": s["unresolved_gate_count"],
         "self_contradictory_on_size": s["self_contradictory_on_size"],
         "goal_reached": s["goal_reached"],
+        "foreign_casualty": s["foreign_casualty"] or "",
     }
+    # The diagnosis layer (classify.py). EPL is a projection of
+    # failure_step, not an independent measure; epl_is_structural marks the
+    # pre-execution classes whose 0 is a definition rather than an
+    # observation, so downstream means can exclude them instead of
+    # averaging a definition.
+    row.update(classify(result))
     for v in STEP_VERDICTS:
         row[f"n_{v}"] = s["counts"].get(v, 0)
     for field in _LIST_FIELDS:
@@ -145,7 +158,9 @@ def _per_image_fieldnames() -> list:
     end-to-end-pipeline plan, Part 1."""
     fields = ["image", "casualty", "route_name", "route_score", "route_admissible",
               "route_coherence", "route_completeness", "gate_rate",
-              "unresolved_gate_count", "self_contradictory_on_size", "goal_reached"]
+              "unresolved_gate_count", "self_contradictory_on_size", "goal_reached",
+              "foreign_casualty",
+              "failure_class", "failure_step", "epl", "epl_is_structural"]
     fields += [f"n_{v}" for v in STEP_VERDICTS]
     for field in _LIST_FIELDS:
         fields += [f"n_{field}", f"{field}_text"]

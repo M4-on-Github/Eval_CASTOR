@@ -22,7 +22,8 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from pipelines.plan_adequacy import gates
-from pipelines.plan_adequacy.methods import RouteRegistry, admissible, recognise_route
+from pipelines.plan_adequacy.methods import (RouteRegistry, admissible,
+                                             detect_perception_mismatch, recognise_route)
 from pipelines.plan_adequacy.vocab import ToolRegistry
 from pipelines.plan_adequacy.worldstate import WorldState
 
@@ -111,6 +112,13 @@ class PlanResult:
     unresolved_gate_count: int
     self_contradictory_on_size: bool
     goal_reached: bool          # see execute_plan's goal_reached computation, below
+    #: Diagnostic only -- NEVER read by any grading path. When the plan's
+    #: tools fit some other casualty's routes better than its own, this is
+    #: that casualty's name; else None. Feeds the STRATEGY-PERCEPTION class
+    #: in classify.py, which otherwise cannot be told apart from
+    #: NO-PROCEDURE. Defaulted so every existing PlanResult construction
+    #: (13 test modules) keeps working unchanged.
+    foreign_casualty: Optional[str] = None
 
     def summary(self) -> dict:
         counts = {}
@@ -133,17 +141,29 @@ class PlanResult:
             "unresolved_gate_count": self.unresolved_gate_count,
             "self_contradictory_on_size": self.self_contradictory_on_size,
             "goal_reached": self.goal_reached,
+            "foreign_casualty": self.foreign_casualty,
         }
 
 
 def execute_plan(calls: list, casualty: str, scenario, tool_registry: ToolRegistry,
-                  route_registry: RouteRegistry, plan_text: str = "") -> PlanResult:
+                  route_registry: RouteRegistry, plan_text: str = "",
+                  repaired_steps: frozenset = frozenset()) -> PlanResult:
     """Run the seven passes over one plan's extracted (or gold) ToolCalls.
 
     `plan_text` is optional raw text used only for the pure-regex metrics
     (gate_rate, self_contradictory_on_size via gates.py part 1) -- pass ""
     when only hand-written ToolCalls exist and no source text is available
     (e.g. some calibration probes), those two fields will just read 0/False.
+
+    `repaired_steps` is the counterfactual-repair hook (repair.py): step
+    numbers whose failure is to be NEUTRALISED rather than graded -- the gate
+    is treated as resolved, the method as fitting, the missing preconditions
+    as granted, the magnitude as stated. The step then executes and the walk
+    continues, so the next failure downstream becomes observable. This is
+    strictly a measurement path: it answers "if this one failure vanished,
+    how much further would the plan get", which is the only way to rank
+    remedies. It must never be set on a scoring run, and defaults to empty so
+    it cannot be reached by accident.
     """
     action_calls = [c for c in calls if c.tool != "no_match"]
     called_tool_names = {c.tool for c in action_calls if tool_registry.has(c.tool)}
@@ -213,7 +233,7 @@ def execute_plan(calls: list, casualty: str, scenario, tool_registry: ToolRegist
 
         # Pass 7: conditional resolution, checked before applying this call's
         # own effects (a gate can only be resolved by a PRIOR step).
-        if c.conditional:
+        if c.conditional and c.step_num not in repaired_steps:
             status = gates.resolve_conditional(c.condition_var, ws)
             if status == "unresolved":
                 unresolved_gate_count += 1
@@ -235,7 +255,8 @@ def execute_plan(calls: list, casualty: str, scenario, tool_registry: ToolRegist
         # rescued a crew that was never capsized in the first place.
         if (not spec.is_assessment
                 and spec.family not in ("assessment", "terminal")
-                and spec.family != casualty):
+                and spec.family != casualty
+                and c.step_num not in repaired_steps):
             step_results.append(StepResult(
                 n=c.step_num, text=c.step_text, tool=c.tool, params=c.params,
                 conditional=c.conditional, condition_text=c.condition_text,
@@ -247,6 +268,12 @@ def execute_plan(calls: list, casualty: str, scenario, tool_registry: ToolRegist
 
         # Pass 3: sequencing.
         missing = ws.missing_requires(c, tool_registry)
+        if missing and c.step_num in repaired_steps:
+            # Grant what the plan failed to establish, so downstream steps
+            # that legitimately depend on it are no longer scored against a
+            # gap this repair is standing in for.
+            ws.grant(missing)
+            missing = set()
         if missing:
             sequence_violations.append((c.step_num, ", ".join(sorted(missing))))
             step_results.append(StepResult(
@@ -267,7 +294,7 @@ def execute_plan(calls: list, casualty: str, scenario, tool_registry: ToolRegist
         # this makes UNSPECIFIED immune to the extractor inventing a value.
         has_numeric_param = bool(_DIGIT_RE.search(c.step_text))
         wants_numeric = any(t.startswith(("int", "float")) for t in spec.params.values())
-        if wants_numeric and not has_numeric_param:
+        if wants_numeric and not has_numeric_param and c.step_num not in repaired_steps:
             verdict, detail = "UNSPECIFIED", "No magnitude given; adequacy unverifiable."
         else:
             verdict, detail = "SPECIFIED_UNGRADED", "Magnitude present (or none required); numeric grading is phase 2."
@@ -361,4 +388,5 @@ def execute_plan(calls: list, casualty: str, scenario, tool_registry: ToolRegist
         gate_rate=gate_count, unresolved_gate_count=unresolved_gate_count,
         self_contradictory_on_size=self_contra,
         goal_reached=goal_reached,
+        foreign_casualty=detect_perception_mismatch(called_tool_names, casualty, route_registry),
     )

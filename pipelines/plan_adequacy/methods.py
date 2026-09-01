@@ -197,6 +197,57 @@ def recognise_route(called_tools: set, casualty: str, registry: RouteRegistry) -
     return RouteMatch(route=best, score=best_score, matched_tools=best_matched, unmatched_tools=unmatched)
 
 
+def detect_perception_mismatch(called_tools: set, casualty: str,
+                                registry: RouteRegistry) -> Optional[str]:
+    """Does this plan fit some OTHER casualty's routes better than its own?
+
+    Diagnostic overlay only -- this must never feed grading. recognise_route()
+    above only ever considers registry.for_casualty(casualty), which is
+    correct for scoring (a plan is graded against the routes that could
+    actually resolve the casualty it was given) but means a plan describing
+    an aground refloat for a sunken vessel simply matches nothing and reads
+    as incoherent. That conflates two very different diagnoses: "wrote no
+    recognisable procedure" and "wrote a competent procedure for the wrong
+    accident". The second is a perception failure upstream of planning, and
+    it needs its own class -- see the failure taxonomy in
+    reports/p9/redesign.tex.
+
+    Returns the foreign casualty name when the plan's tools fit one of its
+    routes strictly better than anything in `casualty`'s own library (and
+    clear the recognition floor), else None.
+    """
+    own_routes = registry.for_casualty(casualty)
+    own_best = 0.0
+    for route in own_routes:
+        if route.core_tools:
+            own_best = max(own_best, len(called_tools & route.core_tools) / len(route.core_tools))
+
+    # Tools that appear in ANY of this casualty's own routes. A foreign match
+    # built only out of these is not evidence of anything: assessment and
+    # safety tools (survey_hull, muster_personnel, calculate_stability) are
+    # shared across casualty families by design, so a generic plan will
+    # partially "match" every family's routes. Requiring at least one
+    # foreign-DISTINCTIVE tool is what separates "this plan uses the wrong
+    # family's techniques" from "this plan uses the tools everybody uses".
+    own_tools = {t for r in own_routes for t in r.core_tools}
+
+    foreign_best, foreign_casualty = 0.0, None
+    for other in registry.all_casualties():
+        if other == casualty:
+            continue
+        for route in registry.for_casualty(other):
+            if not route.core_tools:
+                continue
+            matched = called_tools & route.core_tools
+            score = len(matched) / len(route.core_tools)
+            if score > foreign_best and (matched - own_tools):
+                foreign_best, foreign_casualty = score, other
+
+    if foreign_best < RouteRegistry.RECOGNITION_FLOOR or foreign_best <= own_best:
+        return None
+    return foreign_casualty
+
+
 def admissible(route: Route, scenario) -> Literal["yes", "no", "unknown"]:
     """Is `route` physically admissible for `scenario`?
 

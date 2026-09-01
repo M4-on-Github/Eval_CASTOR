@@ -69,6 +69,16 @@ class WorldState:
     def true_facts(self) -> frozenset:
         return frozenset(self._true)
 
+    def grant(self, facts) -> None:
+        """Inject facts as KNOWN without any step having established them.
+
+        Counterfactual-repair support only (repair.py) -- no grading path may
+        call this. Facts land in _known rather than _true because a repair
+        stands in for the assessment the plan should have performed, not for
+        a physical change to the casualty it never made.
+        """
+        self._known |= set(facts)
+
     def missing_requires(self, call, registry) -> set:
         """Facts `call.tool` requires that are not yet known/true. Non-empty
         -> this call is a SEQUENCE_VIOLATION. Checks both knowledge and
