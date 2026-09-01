@@ -191,9 +191,32 @@ paint();
 """
 
 
-def _read(path):
+def _read(path, run=None):
+    """Rows, each tagged with the run it came from.
+
+    The tag is load-bearing, not bookkeeping. per_step.csv and per_image.csv
+    carry `image` but no arm column, and the SAME image appears in all three
+    arms -- so keying anything by image alone silently merges three different
+    plans. That produced 18-step cards (3 arms x 6 steps) in the first
+    generated worksheet, which would have made every perception judgement
+    meaningless. Item ids are therefore (run, image), rendered "arm | image".
+    """
     with open(path, newline="", encoding="utf-8") as f:
-        return list(csv.DictReader(f))
+        rows = list(csv.DictReader(f))
+    run = run or Path(path).parent.name
+    for r in rows:
+        r["_run"] = run
+        r["_key"] = f'{run}|{r["image"]}'
+    return rows
+
+
+def _arm(run: str) -> str:
+    """Short arm label for display: the worksheet shows which arm a plan came
+    from, since two arms' plans for the same image are different plans."""
+    for name in ("ablation", "standard", "control"):
+        if name in run:
+            return name
+    return run
 
 
 def _every_kth(items, n, key):
@@ -279,30 +302,38 @@ def _perception_groups(run_dirs):
             strict = detect_perception_mismatch(names, casualty, rr,
                                                 MIN_DISTINCTIVE_FOREIGN_TOOLS)
             loose = detect_perception_mismatch(names, casualty, rr, 1)
+            key = f"{Path(d).name}|{image}"
             if strict:
-                groups[image] = "confirmed"
+                groups[key] = "confirmed"
             elif loose:
-                groups[image] = "disputed"
+                groups[key] = "disputed"
     return groups
 
 
-def items_perception(per_image, per_step, n=40, run_dirs=()):
+def _steps_by_key(per_step):
     steps = {}
     for r in per_step:
-        steps.setdefault(r["image"], []).append((int(r["step_num"]), r["step_text"]))
-    by_image = {r["image"]: r for r in per_image}
+        steps.setdefault(r["_key"], []).append((int(r["step_num"]), r["step_text"]))
+    return {k: [t for _, t in sorted(v)] for k, v in steps.items()}
+
+
+def items_perception(per_image, per_step, n=40, run_dirs=()):
+    steps = _steps_by_key(per_step)
+    by_key = {r["_key"]: r for r in per_image}
 
     groups = _perception_groups(run_dirs) if run_dirs else {}
     if not groups:      # no tool_calls available -- fall back to the class label
-        groups = {r["image"]: "confirmed" for r in per_image
+        groups = {r["_key"]: "confirmed" for r in per_image
                   if r["failure_class"] == "STRATEGY_PERCEPTION"}
 
     out = []
     for group, share in (("confirmed", n // 2), ("disputed", n - n // 2)):
-        imgs = [i for i, g in groups.items() if g == group and i in by_image]
-        for image in _every_kth(imgs, share, key=lambda i: i):
-            out.append({"id": image, "casualty": by_image[image]["casualty"],
-                        "steps": [t for _, t in sorted(steps.get(image, []))]})
+        keys = [k for k, g in groups.items() if g == group and k in by_key]
+        for key in _every_kth(keys, share, key=lambda k: k):
+            run, image = key.split("|", 1)
+            out.append({"id": key, "casualty": by_key[key]["casualty"],
+                        "hint": f"{_arm(run)} arm",
+                        "steps": steps.get(key, [])})
     # Interleave so the two groups are not visually separated in the file --
     # a coder who notices a block boundary has been partially unblinded.
     out.sort(key=lambda it: it["id"])
@@ -318,29 +349,29 @@ def items_magnitude(per_step, n=60):
     out = []
     for verdict, share in (("UNSPECIFIED", n // 2), ("SPECIFIED_UNGRADED", n - n // 2)):
         rows = [r for r in per_step if r["verdict"] == verdict and r["tool"] != "no_match"]
-        for r in _every_kth(rows, share, key=lambda r: (r["image"], int(r["step_num"]))):
-            out.append({"id": f'{r["image"]}#{r["step_num"]}',
-                        "text": r["step_text"], "hint": r["tool"]})
+        for r in _every_kth(rows, share, key=lambda r: (r["_key"], int(r["step_num"]))):
+            out.append({"id": f'{r["_key"]}#{r["step_num"]}',
+                        "text": r["step_text"],
+                        "hint": f'{r["tool"]}  ({_arm(r["_run"])})'})
     return out
 
 
 def items_attribution(per_image, per_step, n=40):
     """Stratified across failing classes so no class's attribution rests on a
     handful of plans."""
-    steps = {}
-    for r in per_step:
-        steps.setdefault(r["image"], []).append((int(r["step_num"]), r["step_text"]))
+    steps = _steps_by_key(per_step)
     classes = sorted({r["failure_class"] for r in per_image
                       if r["failure_class"] not in ("VALID", "INCOMPLETE")})
     per_class = max(1, n // max(1, len(classes)))
     out = []
     for cls in classes:
         rows = [r for r in per_image if r["failure_class"] == cls]
-        for r in _every_kth(rows, per_class, key=lambda r: r["image"]):
+        for r in _every_kth(rows, per_class, key=lambda r: r["_key"]):
             fs = r["failure_step"]
-            out.append({"id": r["image"], "casualty": r["casualty"],
-                        "steps": [t for _, t in sorted(steps.get(r["image"], []))],
-                        "hint": f"first problem at step {fs}" if fs else "no step executed"})
+            where = f"first problem at step {fs}" if fs else "no step executed"
+            out.append({"id": r["_key"], "casualty": r["casualty"],
+                        "steps": steps.get(r["_key"], []),
+                        "hint": f'{where}  ({_arm(r["_run"])})'})
     return out
 
 
