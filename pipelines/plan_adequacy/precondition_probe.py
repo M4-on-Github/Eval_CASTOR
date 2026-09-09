@@ -25,16 +25,20 @@ own docstring on why: "n=1 per cell is the model's actual answer, not a
 noisy draw of it" applies here too), so this script does not read
 config.yaml's temperature at all.
 
-Usage (inside castor_qwen.sif, same container run_inference.py uses):
+Usage (inside castor_qwen.sif, same container run_inference.py uses).
+Inputs are committed alongside this script (pipelines/plan_adequacy/) --
+not under reports/p9/, which has a blanket *.jsonl gitignore rule at the
+BenchyBench root; outputs still land in reports/p9/, alongside Phase 1's
+recorded result:
     python precondition_probe.py \\
         --vlm-dir /data/$USER/qwen3vl-8b \\
-        --input   reports/p9/phase2_candidates.jsonl \\
+        --input   pipelines/plan_adequacy/phase2_candidates.jsonl \\
         --output  reports/p9/phase2_responses.jsonl \\
         --max-new-tokens 200
 
     python precondition_probe.py \\
         --vlm-dir /data/$USER/qwen3vl-8b \\
-        --input   reports/p9/phase3_items.jsonl \\
+        --input   pipelines/plan_adequacy/phase3_items.jsonl \\
         --output  reports/p9/phase3_responses.jsonl \\
         --max-new-tokens 400 \\
         --field-prompt continuation_prompt --field-context prefix_plan_text

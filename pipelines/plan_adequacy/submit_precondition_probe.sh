@@ -73,8 +73,12 @@ if [[ ! -d "$VLM_DIR" ]]; then
 fi
 
 REPORTS_DIR="${BENCHYBENCH_ROOT}/reports/p9"
-PHASE2_IN="${REPORTS_DIR}/phase2_candidates.jsonl"
-PHASE3_IN="${REPORTS_DIR}/phase3_items.jsonl"
+mkdir -p "$REPORTS_DIR"
+# Inputs live alongside this script (committed to git, unlike reports/p9/,
+# which has a blanket *.jsonl gitignore rule at the BenchyBench root) --
+# outputs still land in reports/p9/, alongside Phase 1's recorded result.
+PHASE2_IN="${SCRIPT_DIR}/phase2_candidates.jsonl"
+PHASE3_IN="${SCRIPT_DIR}/phase3_items.jsonl"
 if [[ ! -s "$PHASE2_IN" ]]; then
     echo "ERROR: $PHASE2_IN missing -- run precondition_probe_prompts.py first." >&2
     exit 1
