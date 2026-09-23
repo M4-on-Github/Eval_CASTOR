@@ -64,6 +64,9 @@ echo "Job ID:              ${SLURM_JOB_ID:-local}"
 echo "Node:                ${SLURMD_NODENAME:-$(hostname)}"
 echo "============================================================"
 
+# --containall drops the host environment, so BENCHYBENCH_ROOT must be passed
+# in explicitly: run_inference.py expands it in config paths inside the
+# container. Without it, paths stay as the literal "${BENCHYBENCH_ROOT}/...".
 DATA_DIR="/data/${USER}"
 HF_HOME="${DATA_DIR}/.cache/huggingface"
 TORCH_HOME="${DATA_DIR}/.cache/torch"
@@ -77,6 +80,7 @@ apptainer exec --containall --nv \
     --bind "${DATA_DIR}:${DATA_DIR}" \
     --bind "${HOME}:${HOME}" \
     --env USER="${USER}" \
+    --env BENCHYBENCH_ROOT="${BENCHYBENCH_ROOT}" \
     --env PYTHONUNBUFFERED=1 \
     --env HF_HOME="${HF_HOME}" \
     --env TRANSFORMERS_CACHE="${HF_HOME}" \
