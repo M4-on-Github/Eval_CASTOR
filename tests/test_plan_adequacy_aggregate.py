@@ -271,3 +271,30 @@ def test_aggregate_run_summary_row_matches_build_summary_output(tmp_path):
         written = list(csv.DictReader(f))[0]
     assert written["run"] == returned_summary["run"] == "test_run"
     assert written["n_images"] == str(returned_summary["n_images"])
+
+
+def test_all_errors_columns_agree_with_the_per_step_scan_flags():
+    """per_image's all-errors counts are a rollup of per_step's scan_*
+    columns, never a second computation that could drift from them. The
+    plan drops its seabed survey for an unmappable step, so the ground
+    reaction calculation that needed the survey is knocked on."""
+    calls = [
+        _call(1, "sound_tanks", params={"tank_ids": ["1"]}),
+        _call(2, "no_match", text="Deploy divers to cut the anchor chain."),
+        _call(3, "calculate_ground_reaction"),
+        _call(4, "calculate_freeing_force"),
+        _call(5, "attach_tug", text="Deploy 2 tugs at 4000 shp."),
+        _call(6, "pull", text="Pull with 90 tons of force."),
+    ]
+    plan = execute_plan(calls, "aground", _scenario(), _TOOL_REG, _ROUTE_REG,
+                        plan_text="\n".join(c.step_text for c in calls))
+    steps = build_per_step_rows([plan])
+    row = build_per_image_rows([plan])[0]
+
+    for k in ("no_match", "hedged", "method", "sequence"):
+        assert row[f"n_err_{k}"] == sum(bool(s[f"scan_{k}"]) for s in steps), k
+    assert row["n_err_no_match"] == 1
+    assert row["n_err_sequence"] >= 1
+    assert row["n_err_sequence_independent"] == 0     # all downstream of step 2
+    assert row["n_graded_steps"] == 6 and row["n_support_steps"] == 0
+    assert set(PER_IMAGE_FIELDNAMES) >= set(row)

@@ -22,8 +22,9 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from pipelines.plan_adequacy import gates
-from pipelines.plan_adequacy.methods import (RouteRegistry, admissible,
+from pipelines.plan_adequacy.methods import (RouteRegistry, admissible_over_ties,
                                              detect_perception_mismatch, recognise_route)
+from pipelines.plan_adequacy.support import is_support
 from pipelines.plan_adequacy.vocab import ToolRegistry
 from pipelines.plan_adequacy.worldstate import WorldState
 
@@ -84,10 +85,20 @@ _DIGIT_RE = re.compile(r"\b\d")
 #: systematically UNDER-counted -- the error ran in the direction of
 #: flattering the planner, which is the direction that matters.
 #:
+#: A second census over all three arms found the original seven patterns still
+#: miss the same threshold quoted in prose rather than in the prompt's own
+#: shorthand -- "if the vessel's draft exceeds 10 meters", "if the vessel is
+#: larger than 50 meters", "its length exceeds 50 m". These are the SAME
+#: assertion-block numbers, reworded by the planner, and they accounted for 12
+#: of the 18 remaining credits (the corrected rate is 6/636, not 18/636). The
+#: two alternatives below are anchored on a vessel ATTRIBUTE noun or on an
+#: explicitly comparative "larger/longer than", never on an action verb.
+#:
 #: Deliberately conservative: only these patterns are stripped, all of them
 #: cross-references or vessel attributes rather than action quantities. A step
 #: that says "pull at 90 t" or "2 tugs of 4000 shp" still reads as specified,
-#: because nothing here touches it.
+#: because nothing here touches it -- and note the attribute alternative
+#: requires the noun, so "pull at more than 90 t" is untouched.
 _INCIDENTAL_DIGIT_RE = re.compile(
     r"[<>]\s*\d[\d,.]*\s*(?:m|meters?|metres?)\b"        # ">50 m"
     r"|\bover\s+\d[\d,.]*\s*(?:m|meters?|metres?)\b"    # "over 50 meters"
@@ -95,7 +106,23 @@ _INCIDENTAL_DIGIT_RE = re.compile(
     r"|\b\d[\d,.]*\s*DWT\b"                            # "100,000 DWT"
     r"|\bsteps?\s*#?\s*\d+"                              # "step 4"
     r"|\bassertions?\s*#?\s*\d+"                         # "assertion #5"
-    r"|#\s*\d+",                                          # "#3"
+    r"|#\s*\d+"                                          # "#3"
+    # "draft exceeds 10 meters", "length is greater than 50 m"
+    r"|\b(?:draft|length|beam|displacement|LOA)\b[^.;]{0,40}?"
+    r"(?:exceed(?:s|ing)?|(?:is\s+)?(?:greater|more|larger|longer)\s+than"
+    r"|(?:is\s+)?(?:over|above))\s*\d[\d,.]*"
+    # "is larger than 50 meters"
+    r"|\b(?:is|are|appears?\s+to\s+be|seems?\s+to\s+be)\s+"
+    r"(?:larger|longer|bigger|greater)\s+than\s+\d[\d,.]*"
+    # "exceeds 50 meters in length" -- same threshold, attribute noun trailing
+    r"|(?:exceed(?:s|ing)?|(?:greater|more|larger|longer)\s+than)\s*\d[\d,.]*\s*"
+    r"(?:m|meters?|metres?)?\s*in\s+(?:length|draft|beam)\b"
+    # "assertion SUNKEN-3" -- the hyphenated assertion IDs, which the "#5"
+    # alternative above does not reach
+    r"|\b(?:AGROUND|SUNKEN|CAPSIZED|ON[\s_-]?FIRE)[\s_-]*\d+\b"
+    # "a vessel under 10 meters" -- the same size threshold, lower comparator.
+    # Anchored on the noun so "pull at less than 90 t" is untouched.
+    r"|\bvessels?\s+(?:under|below|less\s+than|smaller\s+than)\s*\d[\d,.]*",
     re.IGNORECASE)
 
 
@@ -118,6 +145,7 @@ STEP_VERDICTS = (
     "SEQUENCE_VIOLATION",
     "METHOD_ERROR",
     "NO_MATCH",                 # tool == "no_match": filler/non-actionable step
+    "SUPPORT",                  # no_match that is pure scaffolding -- ungraded, see support.py
 )
 PLAN_VERDICTS = ("NO_RECOGNISABLE_ROUTE", "ROUTE_INADMISSIBLE", "ROUTE_OK")
 
@@ -137,6 +165,16 @@ class StepResult:
     condition_text: Optional[str]
     verdict: str
     detail: str
+    #: All-dimensions scan: {"no_match", "hedged", "method", "sequence",
+    #: "unquantified"} -> bool. `verdict` above is the FIRST of these to fire
+    #: in precedence order, so it hides every later one; these flags record
+    #: what each check actually found on this step, whether or not it was
+    #: reached. See execute_plan for why the two cannot disagree.
+    #:
+    #: Unlike `verdict`, the flags are RAW -- `repaired_steps` exemptions are
+    #: applied to the verdict only. A repaired step still reports what the
+    #: check found; it just isn't scored on it.
+    flags: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -146,7 +184,11 @@ class PlanResult:
     steps: list                 # list[StepResult]
     route_name: Optional[str]
     route_score: float
-    route_admissible: str       # "yes" | "no" | "unknown" | "n/a" (no route recognised)
+    #: "yes" | "no" | "unknown" | "ambiguous" | "n/a" (no route recognised).
+    #: Only "no" is penalised. "unknown" is pending physics.py; "ambiguous"
+    #: means two tied routes disagreed and the call set cannot tell them
+    #: apart -- see methods.admissible_over_ties.
+    route_admissible: str
     route_coherence: Optional[float]
     route_completeness: Optional[float]
     not_attempted: list         # missing core_tools + missing universal obligations
@@ -221,7 +263,11 @@ def execute_plan(calls: list, casualty: str, scenario, tool_registry: ToolRegist
         not_attempted = ["NO_RECOGNISABLE_ROUTE"]
     else:
         route_name, route_score = match.route.name, match.score
-        route_adm = admissible(match.route, scenario)
+        # Not admissible(match.route, ...): when two routes tie on recognition
+        # and disagree on admissibility, match.route is whichever was declared
+        # first, and scoring on it would turn JSON key order into a verdict.
+        # See methods.admissible_over_ties.
+        route_adm = admissible_over_ties(match, scenario)
         total_action = len(called_tool_names & (match.matched_tools | match.unmatched_tools)) or len(called_tool_names)
         route_coherence = (len(match.matched_tools) / total_action) if total_action else None
         missing_core = match.route.core_tools - called_tool_names
@@ -264,32 +310,91 @@ def execute_plan(calls: list, casualty: str, scenario, tool_registry: ToolRegist
             established_at.append((call.step_num, call.tool, fact))
 
     for c in calls:
+        #: Repair exempts a step from being SCORED, not from being measured --
+        #: see StepResult.flags.
+        exempt = c.step_num in repaired_steps
+
+        # SUPPORT: a step the extractor mapped to no tool that is pure
+        # operational scaffolding (a safety perimeter, liaison, logistics).
+        # It is not graded -- it cannot stop the plan and does not count as an
+        # executed step -- and its no_match flag is False, so it never shows
+        # up among a plan's errors. An unknown tool NAME is an extraction
+        # failure and never qualifies. A repaired no_match lands here too:
+        # the repair operator's contract for NO_MATCH is to SKIP the step,
+        # and before this branch existed the executor ignored the exemption,
+        # so repair re-picked the same step until it hit the iteration cap
+        # and every NO_MATCH delta_epl read 0.
+        if c.tool == "no_match" and (exempt or is_support(c.step_text, c.secondary_tools)):
+            step_results.append(StepResult(
+                n=c.step_num, text=c.step_text, tool=c.tool, params=c.params,
+                conditional=c.conditional, condition_text=c.condition_text,
+                verdict="SUPPORT",
+                detail=("Skipped by counterfactual repair." if exempt else
+                        "Operational scaffolding the registry does not model; not graded."),
+                flags={"no_match": False, "hedged": False, "method": False,
+                       "sequence": False, "unquantified": False},
+            ))
+            continue
+
         if c.tool == "no_match" or not tool_registry.has(c.tool):
             step_results.append(StepResult(
                 n=c.step_num, text=c.step_text, tool=c.tool, params=c.params,
                 conditional=c.conditional, condition_text=c.condition_text,
                 verdict="NO_MATCH",
                 detail="No recognised tool for this step (filler, or extraction failure).",
+                flags={"no_match": True, "hedged": False, "method": False,
+                       "sequence": False, "unquantified": False},
             ))
             continue
 
         spec = tool_registry.spec(c.tool)
 
+        # --- all-dimensions scan ------------------------------------------
+        # Every check runs on every step, here, BEFORE the precedence cascade
+        # below picks exactly one of them to become the verdict.
+        #
+        # This is not a second implementation of the cascade and cannot drift
+        # from it: the cascade reads these same flags rather than recomputing.
+        # The reason it is safe to hoist them is that the cascade's `continue`s
+        # never skipped _apply_and_track -- effects are applied on every path
+        # except NO_MATCH, which has no tool and so no effects. The WorldState
+        # trajectory therefore does not depend on which check fired first, so
+        # a check evaluated up front sees exactly the world it would have seen
+        # had the cascade reached it. Taking these flags in precedence order
+        # reproduces `verdict` on all 1,980 steps of the CASTOR corpus, 0
+        # disagreements; test_scan_flags_reproduce_the_verdict is the guard.
+        #
+        # Why this exists: `verdict` answers "what is the first thing wrong
+        # with this step", which systematically under-counts everything low in
+        # the order. Plan-level, sequencing measured 58% of plans through the
+        # verdict and 88% through these flags -- 86 plans were scored clean on
+        # ordering only because another check fired first.
+        flags = {
+            "no_match": False,
+            "hedged": bool(c.conditional
+                           and gates.resolve_conditional(c.condition_var, ws) == "unresolved"),
+            "method": bool(not spec.is_assessment
+                           and spec.family not in ("assessment", "terminal", "universal")
+                           and spec.family != casualty),
+            "sequence": bool(ws.missing_requires(c, tool_registry)),
+            "unquantified": bool(any(t.startswith(("int", "float"))
+                                     for t in spec.params.values())
+                                 and not states_magnitude(c.step_text)),
+        }
         # Pass 7: conditional resolution, checked before applying this call's
         # own effects (a gate can only be resolved by a PRIOR step).
-        if c.conditional and c.step_num not in repaired_steps:
-            status = gates.resolve_conditional(c.condition_var, ws)
-            if status == "unresolved":
-                unresolved_gate_count += 1
-                step_results.append(StepResult(
-                    n=c.step_num, text=c.step_text, tool=c.tool, params=c.params,
-                    conditional=True, condition_text=c.condition_text,
-                    verdict="CONDITIONAL_UNRESOLVED",
-                    detail=(f"Condition '{c.condition_text}' (var={c.condition_var}) "
-                            f"is never established by a prior step."),
-                ))
-                _apply_and_track(c)
-                continue
+        if flags["hedged"] and not exempt:
+            unresolved_gate_count += 1
+            step_results.append(StepResult(
+                n=c.step_num, text=c.step_text, tool=c.tool, params=c.params,
+                conditional=True, condition_text=c.condition_text,
+                verdict="CONDITIONAL_UNRESOLVED",
+                detail=(f"Condition '{c.condition_text}' (var={c.condition_var}) "
+                        f"is never established by a prior step."),
+                flags=flags,
+            ))
+            _apply_and_track(c)
+            continue
 
         # Pass 6: method fit -- action tool called but wrong family for this
         # casualty entirely. Checked BEFORE sequencing: a tool that doesn't
@@ -311,22 +416,20 @@ def execute_plan(calls: list, casualty: str, scenario, tool_registry: ToolRegist
         # stays capsized, because sunken plans attempting to right a wreck are
         # the STRATEGY_PERCEPTION signal and universalising it would erase the
         # finding.
-        if (not spec.is_assessment
-                and spec.family not in ("assessment", "terminal", "universal")
-                and spec.family != casualty
-                and c.step_num not in repaired_steps):
+        if flags["method"] and not exempt:
             step_results.append(StepResult(
                 n=c.step_num, text=c.step_text, tool=c.tool, params=c.params,
                 conditional=c.conditional, condition_text=c.condition_text,
                 verdict="METHOD_ERROR",
                 detail=f"'{c.tool}' belongs to family '{spec.family}', not '{casualty}'.",
+                flags=flags,
             ))
             _apply_and_track(c)
             continue
 
         # Pass 3: sequencing.
         missing = ws.missing_requires(c, tool_registry)
-        if missing and c.step_num in repaired_steps:
+        if missing and exempt:
             # Grant what the plan failed to establish, so downstream steps
             # that legitimately depend on it are no longer scored against a
             # gap this repair is standing in for.
@@ -339,6 +442,7 @@ def execute_plan(calls: list, casualty: str, scenario, tool_registry: ToolRegist
                 conditional=c.conditional, condition_text=c.condition_text,
                 verdict="SEQUENCE_VIOLATION",
                 detail=f"Requires {sorted(missing)} not yet established.",
+                flags=flags,
             ))
             _apply_and_track(c)
             continue
@@ -350,9 +454,7 @@ def execute_plan(calls: list, casualty: str, scenario, tool_registry: ToolRegist
         # see the _DIGIT_RE module comment. A param the model extracted is
         # never trusted on its own to prove a magnitude was actually stated;
         # this makes UNSPECIFIED immune to the extractor inventing a value.
-        has_numeric_param = states_magnitude(c.step_text)
-        wants_numeric = any(t.startswith(("int", "float")) for t in spec.params.values())
-        if wants_numeric and not has_numeric_param and c.step_num not in repaired_steps:
+        if flags["unquantified"] and not exempt:
             verdict, detail = "UNSPECIFIED", "No magnitude given; adequacy unverifiable."
         else:
             verdict, detail = "SPECIFIED_UNGRADED", "Magnitude present (or none required); numeric grading is phase 2."
@@ -360,7 +462,7 @@ def execute_plan(calls: list, casualty: str, scenario, tool_registry: ToolRegist
         step_results.append(StepResult(
             n=c.step_num, text=c.step_text, tool=c.tool, params=c.params,
             conditional=c.conditional, condition_text=c.condition_text,
-            verdict=verdict, detail=detail,
+            verdict=verdict, detail=detail, flags=flags,
         ))
         _apply_and_track(c)
 
@@ -419,23 +521,20 @@ def execute_plan(calls: list, casualty: str, scenario, tool_registry: ToolRegist
     # doesn't hold together" case that disqualifies, even though no single
     # step verdict catches it -- e.g. manual_righting reaching
     # vessel_righted cleanly, on a vessel too large for manual righting to
-    # ever actually work), (c) NO step is UNSPECIFIED -- a step whose tool
-    # wants a magnitude and whose text never states one is not a decided
-    # action, it is a gesture at an action, and a plan that reaches
-    # vessel_righted via "parbuckle with floating cranes" without ever
-    # saying how many or rated to what has not demonstrated a salvage plan
-    # that holds together (this is the *decisive* half of "correct and
-    # decisive"; UNSPECIFIED deliberately stays OUT of BAD_VERDICTS, which
-    # route_completeness also consumes and which is about route execution,
-    # not magnitude), AND (d) the casualty's terminal_facts (goals.json)
+    # ever actually work), AND (c) the casualty's terminal_facts (goals.json)
     # were actually established by the time every step has been applied.
-    # All four are required.
+    # All three are required. SUPPORT steps are not bad verdicts.
+    #
+    # There used to be a fourth conjunct: no step UNSPECIFIED (no magnitude
+    # stated). Quantities were dropped from P9's question -- see
+    # classify.NON_EXECUTABLE -- so a plan is no longer held short of its
+    # goal for them either; the two had to move together or a clean plan
+    # would read INCOMPLETE purely for being unquantified.
     goal = route_registry.goal_for(casualty)
     no_bad_verdicts = not any(s.verdict in BAD_VERDICTS for s in step_results)
     route_ok = route_adm != "no"
-    fully_specified = not any(s.verdict == "UNSPECIFIED" for s in step_results)
     terminal_facts_met = bool(goal) and goal.terminal_facts <= (ws.known_facts() | ws.true_facts())
-    goal_reached = no_bad_verdicts and route_ok and fully_specified and terminal_facts_met
+    goal_reached = no_bad_verdicts and route_ok and terminal_facts_met
 
     return PlanResult(
         image=getattr(scenario, "image", ""), casualty=casualty, steps=step_results,

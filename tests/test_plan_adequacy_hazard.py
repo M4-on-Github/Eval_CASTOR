@@ -94,6 +94,35 @@ def test_valid_and_incomplete_plans_stay_in_the_risk_set_and_produce_no_events()
     assert table["hazard"][("PROCEDURE", 3)] == 0.5
 
 
+def test_clean_plans_leave_the_risk_set_after_their_own_last_step():
+    """Plans are not all 6 steps long once the model chooses the length. A
+    clean 4-step plan cannot fail at step 5, so it must not sit in step 5's
+    denominator; otherwise every late hazard is diluted by plans that had
+    already ended."""
+    rows = [{"failure_class": "VALID", "failure_step": None, "epl": 4,
+             "epl_is_structural": False} for _ in range(6)]
+    rows += [_row("COMMITMENT", 9) for _ in range(2)]
+    table = hazard_table(rows)
+    assert max(table["at_risk"]) == 9          # horizon is the longest plan
+    assert table["at_risk"][4] == 8
+    assert table["at_risk"][5] == 2            # the six 4-step plans ended
+    assert table["hazard"][("COMMITMENT", 9)] == 1.0
+
+
+def test_hazard_steps_count_graded_steps_not_plan_numbering():
+    """A plan with two SUPPORT steps before failing at its step 5 failed at
+    its 3rd graded step. Indexing by the plan's own number would put the
+    event past clean plans that had already run out of graded steps."""
+    rows = [{"failure_class": "PROCEDURE", "failure_step": 5, "epl": 2,
+             "epl_is_structural": False}]
+    rows += [{"failure_class": "VALID", "failure_step": None, "epl": 3,
+              "epl_is_structural": False}]
+    table = hazard_table(rows)
+    assert table["events"] == {("PROCEDURE", 3): 1}
+    assert max(table["at_risk"]) == 3
+    assert table["hazard"][("PROCEDURE", 3)] == 0.5
+
+
 def test_mean_epl_is_none_for_structural_zeros_not_zero():
     """Averaging a definition produces a number that looks like evidence."""
     rows = [_row("NO_PROCEDURE", None, structural=True) for _ in range(3)]

@@ -27,52 +27,64 @@ from collections import defaultdict
 
 from pipelines.plan_adequacy.classify import FAILURE_CLASSES
 
-MAX_STEPS = 6
-
-
-def hazard_table(rows: list, max_steps: int = MAX_STEPS) -> dict:
+def hazard_table(rows: list, max_steps: int = None) -> dict:
     """Cause-specific hazard by (class, step).
 
-    `rows` are dicts carrying at least `failure_class` and `failure_step`
-    (as emitted by classify.classify()); a None failure_step means the plan
-    either failed before execution or never failed at all, which the
+    `rows` are dicts carrying at least `failure_class`, `failure_step` and
+    `epl` (as emitted by classify.classify()); a None failure_step means the
+    plan either failed before execution or never failed at all, which the
     epl/class pair already distinguishes.
+
+    `max_steps` defaults to the longest plan in `rows`. Plans are not all the
+    same length (procedural_v3 lets the model choose), so a plan that ran
+    clean is at risk only up to its own last step -- a 4-step plan cannot
+    fail at step 5, and counting it there would dilute every late hazard.
+
+    k counts GRADED steps, not the plan's own step numbers: a SUPPORT step
+    cannot fail, so it is not an opportunity to. The failing step's graded
+    index is epl + 1, which equals failure_step whenever a plan has no
+    SUPPORT steps before its failure.
 
     Returns {"at_risk": {k: n}, "events": {(cls, k): n},
              "hazard": {(cls, k): float}, "k0": {cls: n}}.
     """
     k0 = defaultdict(int)          # pre-execution failures, k = 0
     events = defaultdict(int)      # (class, k) -> count
+    last_at_risk = []              # last step each executed plan was at risk
     for row in rows:
-        step = row.get("failure_step")
-        if step is None:
-            if row["failure_class"] not in ("VALID", "INCOMPLETE"):
-                k0[row["failure_class"]] += 1
-            continue
-        events[(row["failure_class"], step)] += 1
+        if row.get("failure_step") is not None:
+            step = row["epl"] + 1
+            events[(row["failure_class"], step)] += 1
+            last_at_risk.append(step)
+        elif row["failure_class"] in ("VALID", "INCOMPLETE"):
+            # Ran clean: at risk at every step it has, i.e. 1..EPL.
+            last_at_risk.append(row["epl"])
+        else:
+            k0[row["failure_class"]] += 1
+
+    if max_steps is None:
+        max_steps = max(last_at_risk, default=1)
 
     # Risk set at step k: plans that reached step k without having already
-    # failed. A plan that failed pre-execution was never at risk at any step
-    # and is excluded from every denominator -- including it would make the
-    # step-wise hazards a function of how many plans never got a route,
-    # which is a different question.
-    survivors = sum(1 for r in rows if r.get("failure_step") is not None
-                    or r["failure_class"] in ("VALID", "INCOMPLETE"))
+    # failed or run out of steps. A plan that failed pre-execution was never
+    # at risk at any step and is excluded from every denominator -- including
+    # it would make the step-wise hazards a function of how many plans never
+    # got a route, which is a different question.
     at_risk, hazard = {}, {}
     for k in range(1, max_steps + 1):
-        at_risk[k] = survivors
-        if survivors:
+        n_at_risk = sum(1 for last in last_at_risk if last >= k)
+        at_risk[k] = n_at_risk
+        if n_at_risk:
             for cls in FAILURE_CLASSES:
                 n = events.get((cls, k), 0)
                 if n:
-                    hazard[(cls, k)] = n / survivors
-        survivors -= sum(events.get((cls, k), 0) for cls in FAILURE_CLASSES)
+                    hazard[(cls, k)] = n / n_at_risk
 
     return {"at_risk": at_risk, "events": dict(events),
             "hazard": dict(hazard), "k0": dict(k0)}
 
 
-def hazard_rank(rows: list, max_steps: int = MAX_STEPS) -> dict:
+def hazard_rank(rows: list, max_steps: int = None) -> dict:
     """Rank the STEP-WISE classes by summed cause-specific hazard, 1 = most
     hazardous. Pre-execution classes get None.
 

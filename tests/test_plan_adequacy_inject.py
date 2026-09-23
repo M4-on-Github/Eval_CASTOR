@@ -102,12 +102,17 @@ def test_sequence_injection_targets_a_step_that_actually_has_preconditions():
             f"{casualty}: moved step {calls[0].tool} has no preconditions to violate")
 
 
-def test_commitment_injection_leaves_params_populated():
-    """Specificity must be read from the step TEXT. Stripping digits from the
-    text while leaving params intact is what proves the extractor cannot
-    satisfy the check by inventing a value."""
-    from pipelines.plan_adequacy.inject import inject_commitment
-    calls, expected = inject_commitment(BASES["aground"](), "aground")
-    assert expected == "COMMITMENT"
-    assert any(c.params for c in calls)
-    assert not any(ch.isdigit() for c in calls for ch in c.step_text)
+def test_support_injection_keeps_every_base_valid_and_epl_unchanged():
+    """A scaffolding step must be invisible to grading: same class, same EPL
+    as the clean base. If EPL rose, padding a plan would score."""
+    for r in run_injections():
+        if r["defect"] == "support_step":
+            assert r["got"] == "VALID", r
+            assert r["epl"] == 6, r              # 7 steps, 6 graded
+
+
+def test_an_unmapped_action_still_stops_the_plan_at_its_own_step():
+    for r in run_injections():
+        if r["defect"] == "unmapped_action":
+            assert r["got"] == "PROCEDURE" and r["failure_step"] == 2, r
+            assert r["epl"] == 1, r

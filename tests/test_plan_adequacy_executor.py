@@ -110,8 +110,48 @@ def test_capsized_only_tool_in_aground_plan_is_method_error():
 
 def test_no_match_tool_produces_no_match_verdict_not_a_crash():
     tool_reg, route_reg = _reg()
-    calls = [_call(1, "no_match", text="Coordinate with relevant stakeholders.")]
+    calls = [_call(1, "no_match", text="Deploy divers to cut the anchor chain.")]
     result = execute_plan(calls, "aground", _scenario(), tool_reg, route_reg)
+    assert result.steps[0].verdict == "NO_MATCH"
+    assert result.steps[0].flags["no_match"] is True
+
+
+def test_pure_scaffolding_no_match_is_support_and_not_bad():
+    tool_reg, route_reg = _reg()
+    calls = [_call(1, "no_match", text="Coordinate with relevant stakeholders."),
+             _call(2, "no_match", text="Establish a safety perimeter using buoys.")]
+    result = execute_plan(calls, "aground", _scenario(), tool_reg, route_reg)
+    assert [s.verdict for s in result.steps] == ["SUPPORT", "SUPPORT"]
+    assert not any(s.flags["no_match"] for s in result.steps)
+    assert "SUPPORT" not in BAD_VERDICTS
+
+
+def test_a_support_category_step_naming_a_real_action_stays_no_match():
+    """The audit's finding: category patterns match anywhere in a step, and
+    v2 steps pack several actions together. A tow or a diver inspection
+    inside a 'coordinate with' step is not scaffolding."""
+    tool_reg, route_reg = _reg()
+    for text in ("Coordinate with the tug master to tow the vessel to port.",
+                 "Establish a perimeter and deploy divers to inspect the hull.",
+                 "Coordinate with engineers to determine whether to use tugs or cranes."):
+        result = execute_plan([_call(1, "no_match", text=text)], "aground",
+                              _scenario(), tool_reg, route_reg)
+        assert result.steps[0].verdict == "NO_MATCH", text
+
+
+def test_extractor_secondary_tools_veto_support():
+    tool_reg, route_reg = _reg()
+    call = ToolCall(step_num=1, step_text="Establish a perimeter around the vessel.",
+                    tool="no_match", params={}, conditional=False, condition_text=None,
+                    condition_var="none", secondary_tools=("muster_personnel",))
+    result = execute_plan([call], "on_fire", _scenario(), tool_reg, route_reg)
+    assert result.steps[0].verdict == "NO_MATCH"
+
+
+def test_an_unknown_tool_name_is_never_support():
+    tool_reg, route_reg = _reg()
+    result = execute_plan([_call(1, "summon_kraken", text="Establish a perimeter.")],
+                          "aground", _scenario(), tool_reg, route_reg)
     assert result.steps[0].verdict == "NO_MATCH"
 
 
@@ -165,13 +205,14 @@ def test_goal_reached_true_for_a_fully_clean_plan_that_reaches_the_goal():
     assert result.goal_reached is True
 
 
-def test_goal_reached_false_when_an_otherwise_clean_plan_leaves_a_step_unspecified():
-    """The 'decisive' half of the criterion. This plan has zero violations, an
-    admissible route, and establishes vessel_refloated -- but the two steps
-    that do the physical work never state a magnitude, so the plan gestures at
-    a salvage rather than specifying one. That must not count as reaching the
-    goal. (This is the real capsized/00195.jpg case in miniature: it passed on
-    structure alone while committing to no numbers.)"""
+def test_goal_reached_is_not_withheld_for_an_unquantified_step():
+    """Quantities were dropped from P9's question. This plan has zero
+    violations, an admissible route, and establishes vessel_refloated; its
+    two physical steps state no magnitude. They are still labelled
+    UNSPECIFIED, but that no longer holds the plan short of its goal --
+    otherwise a clean plan would read INCOMPLETE purely for being
+    unquantified. (capsized/00195.jpg was the real case that first put the
+    magnitude conjunct in.)"""
     tool_reg, route_reg = _reg()
     calls = [
         _call(1, "sound_tanks", params={"tank_ids": ["1"]}),
@@ -185,7 +226,7 @@ def test_goal_reached_false_when_an_otherwise_clean_plan_leaves_a_step_unspecifi
     result = execute_plan(calls, "aground", _scenario(), tool_reg, route_reg)
     assert any(s.verdict == "UNSPECIFIED" for s in result.steps)
     assert not any(s.verdict in BAD_VERDICTS for s in result.steps)
-    assert result.goal_reached is False
+    assert result.goal_reached is True
 
 
 def test_goal_reached_false_when_terminal_fact_met_but_plan_has_a_violation_elsewhere():
@@ -518,6 +559,39 @@ def test_incidental_digits_do_not_count_as_a_stated_magnitude():
         assert states_magnitude(text) is False, text
 
 
+# A second census over all three arms found the seven original patterns still
+# missed the SAME assertion-block thresholds when the planner reworded them
+# into prose. These twelve steps were the bulk of the remaining false credits;
+# stripping them took the corpus rate from 18/636 to 2/636, of which exactly
+# one is a genuine action magnitude on hand audit.
+
+def test_reworded_vessel_size_thresholds_are_still_incidental():
+    from pipelines.plan_adequacy.executor import states_magnitude
+    for text in ["If the vessel's draft exceeds 10 meters, deploy tugs",
+                 "If the vessel's draft is greater than 10 m, deploy tugs",
+                 "If the vessel is larger than 50 meters, lighter the cargo",
+                 "Lighter the vessel if it exceeds 50 meters in length",
+                 "Its length exceeds 50 m, so remove weight forward",
+                 "For a vessel under 10 meters, right it manually",
+                 "Offload fuel, as mandated by assertion SUNKEN-3",
+                 "Lighter the vessel, as required by assertion AGROUND-2"]:
+        assert states_magnitude(text) is False, text
+
+
+def test_new_strips_do_not_swallow_a_comparative_action_magnitude():
+    """The new alternatives are anchored on a vessel-attribute noun or on
+    `vessel <comparator>`, so a comparative magnitude for the ACTION survives.
+    This is the over-stripping regression guard: stripping too much would
+    push steps into UNSPECIFIED, which is the direction that flatters nothing
+    but is still wrong."""
+    from pipelines.plan_adequacy.executor import states_magnitude
+    for text in ["Pull at more than 90 t",
+                 "Lift with less than 900 t of rated capacity",
+                 "Dredge to 5 m below the keel",
+                 "Apply foam at over 4000 lpm"]:
+        assert states_magnitude(text) is True, text
+
+
 def test_a_vessel_size_threshold_does_not_rescue_an_otherwise_vague_step():
     """The whole failure mode in one case: the assertion block injects
     ">50 m" into the plan, and that phrase alone used to flip a step from
@@ -588,3 +662,78 @@ def test_every_registry_family_is_one_the_executor_understands():
     assert names, "registry loaded no tools"
     for name in sorted(names):
         assert reg.family(name) in allowed, f"{name}: unknown family {reg.family(name)}"
+
+
+# ---------------------------------------------------------------------------
+# All-dimensions scan (StepResult.flags)
+# ---------------------------------------------------------------------------
+# The scan exists because `verdict` is the FIRST failing check in precedence
+# order, so every check below the one that fired is silently under-counted.
+# Plan-level on the CASTOR corpus, sequencing measures 58% of plans through
+# verdict counts and 88% through these flags.
+#
+# The design rests on one claim: hoisting the checks above the cascade cannot
+# change what they see, because the cascade already applied effects on every
+# path except NO_MATCH. These tests are that claim's guard.
+
+def _verdict_from_flags(f, tool=None):
+    """The executor's precedence order, applied to the scan flags. SUPPORT is
+    the one verdict the flags cannot see (it is ungraded, so every flag is
+    False), so it is recognised from the tool: a no_match step whose
+    no_match flag is off."""
+    if tool == "no_match" and not f["no_match"]:
+        return "SUPPORT"
+    if f["no_match"]:
+        return "NO_MATCH"
+    if f["hedged"]:
+        return "CONDITIONAL_UNRESOLVED"
+    if f["method"]:
+        return "METHOD_ERROR"
+    if f["sequence"]:
+        return "SEQUENCE_VIOLATION"
+    return "UNSPECIFIED" if f["unquantified"] else "SPECIFIED_UNGRADED"
+
+
+def test_scan_flags_reproduce_the_verdict():
+    """Taking the flags in precedence order must give back `verdict` exactly.
+    If this fails, the flags and the cascade have drifted and every rate read
+    off the flags is unanchored."""
+    tool_reg, route_reg = _reg()
+    calls = [_call(1, "survey_hull"),
+             _call(2, "no_match", text="Establish a safety perimeter"),
+             _call(6, "no_match", text="Deploy divers to cut the anchor chain"),
+             _call(3, "rig_parbuckling", text="Rig parbuckling points"),
+             _call(4, "right_vessel", text="Right the vessel"),
+             _call(5, "monitor_tide", text="Monitor the tide")]
+    for casualty in ("capsized", "aground", "sunken", "on_fire"):
+        result = execute_plan(calls, casualty, _scenario(), tool_reg, route_reg)
+        for s in result.steps:
+            assert _verdict_from_flags(s.flags, s.tool) == s.verdict, (
+                f"{casualty} step {s.n}: flags say "
+                f"{_verdict_from_flags(s.flags, s.tool)}, verdict says {s.verdict}")
+
+
+def test_scan_records_checks_the_cascade_never_reached():
+    """The point of the scan: a step whose verdict is decided high in the
+    order still reports what the lower checks found."""
+    tool_reg, route_reg = _reg()
+    # right_vessel in an aground plan is a METHOD_ERROR, which short-circuits
+    # before sequencing and magnitude are ever consulted by the cascade.
+    result = execute_plan([_call(1, "right_vessel", text="Right the vessel")],
+                          "aground", _scenario(), tool_reg, route_reg)
+    s = result.steps[0]
+    assert s.verdict == "METHOD_ERROR"
+    assert s.flags["method"] is True
+    # ...but the plan ALSO never rescued the crew, and never stated a load.
+    assert s.flags["sequence"] is True, "sequencing was masked by METHOD_ERROR"
+    assert s.flags["unquantified"] is True, "magnitude was masked by METHOD_ERROR"
+
+
+def test_every_step_carries_all_five_flags():
+    tool_reg, route_reg = _reg()
+    result = execute_plan([_call(1, "survey_hull"),
+                           _call(2, "no_match", text="Liaise with the authorities")],
+                          "capsized", _scenario(), tool_reg, route_reg)
+    for s in result.steps:
+        assert set(s.flags) == {"no_match", "hedged", "method",
+                                "sequence", "unquantified"}, s.flags

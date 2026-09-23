@@ -223,15 +223,30 @@ def inject_unresolved_gate(calls, casualty):
     return out, "PROCEDURE"
 
 
-def inject_commitment(calls, casualty):
-    """Strip the magnitudes from the step TEXT while leaving params intact --
-    which also verifies specificity cannot be satisfied from the params dict.
-    """
-    out = []
-    for c in calls:
-        text = "".join(ch for ch in c.step_text if not ch.isdigit())
-        out.append(_c(c.step_num, c.tool, text, **c.params))
-    return out, "COMMITMENT"
+def _insert_after_first(calls, tool, text):
+    """Insert one no_match step after step 1 and renumber, so the insertion
+    sits inside the executable prefix rather than past its end."""
+    out = [calls[0], _c(2, tool, text)] + list(calls[1:])
+    return [_c(i + 1, c.tool, c.step_text, **c.params) for i, c in enumerate(out)]
+
+
+def inject_support_step(calls, casualty):
+    """A pure scaffolding step. Not a defect: the plan must stay VALID, which
+    is the check that SUPPORT is neither a failure nor a stop. The COMMITMENT
+    injector this replaced was retired with quantities -- UNSPECIFIED no longer
+    stops a plan, so there is no class left for it to recover."""
+    return _insert_after_first(
+        calls, "no_match",
+        "Establish a safety perimeter around the vessel using buoys and warning signs."), "VALID"
+
+
+def inject_unmapped_action(calls, casualty):
+    """A step naming a real action the extractor could not map. Worded to hit
+    a support category (liaison) as well, so this is the guard's test: the
+    category match alone must not be enough to skip it."""
+    return _insert_after_first(
+        calls, "no_match",
+        "Coordinate with the tug master to tow the vessel clear of the channel."), "PROCEDURE"
 
 
 INJECTORS = [
@@ -240,7 +255,8 @@ INJECTORS = [
     ("method_error", inject_method_error),
     ("sequence_violation", inject_sequence_violation),
     ("unresolved_gate", inject_unresolved_gate),
-    ("commitment", inject_commitment),
+    ("support_step", inject_support_step),
+    ("unmapped_action", inject_unmapped_action),
 ]
 
 

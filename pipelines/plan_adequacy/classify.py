@@ -17,11 +17,15 @@ Two objects come out of here:
 
   * EPL (Executable Prefix Length) -- how many leading steps a deterministic
     executor could actually carry out before the plan stopped telling it what
-    to do. Integer 0-6. This is NOT a second variable: EPL = failure_step - 1,
-    so it is a projection of the same record. It exists because it contains
-    the old endpoint as its top bin (goal_reached <=> EPL == 6 and terminal
-    fact established), and because instrument error can be measured in the
-    same unit, which the 1 - p**6 argument it replaces could not do.
+    to do. Counts GRADED steps only -- SUPPORT steps (pure scaffolding, see
+    support.py) are neither executed actions nor failures -- so it runs from
+    0 to the plan's graded-step count. It is NOT a second variable: EPL is
+    the number of graded steps before failure_step (failure_step - 1 when a
+    plan has no SUPPORT steps), a projection of the same record. It exists
+    because it contains the old endpoint as its top bin (goal_reached <=>
+    every graded step executed and the terminal fact established), and
+    because instrument error can be measured in the same unit, which the
+    1 - p**6 argument it replaces could not do.
 
 Why first-failure only. 72.7% (ablation) and 74.5% (control) of sequence
 violations in the corpus occur downstream of an earlier NO_MATCH or
@@ -37,7 +41,6 @@ prevalence understates COMMITMENT. hazard.py exists to correct exactly this
 and must be read alongside any prevalence table produced from here.
 """
 
-import re
 from typing import Optional
 
 from pipelines.plan_adequacy.executor import BAD_VERDICTS
@@ -61,13 +64,20 @@ FAILURE_CLASSES = (
 #: observation is how a table starts lying.
 PRE_EXECUTION_CLASSES = frozenset({"NO_PROCEDURE", "STRATEGY_PERCEPTION"})
 
-#: Step verdicts that make a step non-executable. Note this is BAD_VERDICTS
-#: *plus* UNSPECIFIED: a step whose tool wants a magnitude and whose text
-#: never states one is not something an executor can carry out. UNSPECIFIED
-#: deliberately stays out of BAD_VERDICTS itself (route_completeness also
-#: consumes that set, and is about route execution rather than magnitude),
-#: which is why this is a separate constant rather than a reuse.
-NON_EXECUTABLE = BAD_VERDICTS | {"UNSPECIFIED"}
+#: Step verdicts that stop a plan. This used to be BAD_VERDICTS plus
+#: UNSPECIFIED (a step whose tool wants a magnitude and whose text never
+#: states one). Quantities were dropped from P9's question: the CASTOR plans
+#: state essentially none (337 of 338 gold steps), so UNSPECIFIED fired on
+#: almost every numeric-param tool and measured the registry's parameter list
+#: rather than the planner. UNSPECIFIED is still assigned per step and
+#: scan_unquantified is still in per_step.csv; it just no longer stops a plan,
+#: so COMMITMENT is now empty by construction. The separate name is kept so
+#: the stop set can diverge from BAD_VERDICTS again without touching callers.
+NON_EXECUTABLE = BAD_VERDICTS
+
+#: Verdicts a step can carry without being graded at all: pure scaffolding
+#: (support.py). They never stop a plan and never count towards EPL.
+UNGRADED = frozenset({"SUPPORT"})
 
 #: Which class a first-failing step's verdict implies. METHOD_ERROR is a
 #: technique failure detected at step level rather than at route level --
@@ -78,19 +88,29 @@ _VERDICT_CLASS = {
     "SEQUENCE_VIOLATION": "PROCEDURE",
     "NO_MATCH": "PROCEDURE",
     "CONDITIONAL_UNRESOLVED": "PROCEDURE",
-    "UNSPECIFIED": "COMMITMENT",
 }
 
 
 def first_failure(plan) -> Optional[int]:
-    """1-based index of the first non-executable step, or None if all six
-    execute cleanly. Steps are consulted in their own declared order (`n`)
-    rather than list order, so a caller that assembled them out of order
-    cannot silently shift the answer."""
+    """Step number (`n`, the plan's own numbering) of the first
+    non-executable step, or None if every step executes cleanly. Steps are
+    consulted in their own declared order rather than list order, so a caller
+    that assembled them out of order cannot silently shift the answer."""
     for step in sorted(plan.steps, key=lambda s: s.n):
         if step.verdict in NON_EXECUTABLE:
             return step.n
     return None
+
+
+def graded_steps_before(plan, step_n: Optional[int] = None) -> int:
+    """How many GRADED steps precede step `step_n` (all of them if None).
+
+    This is EPL. SUPPORT steps are skipped on both sides: a perimeter step
+    before the failure is not an executed salvage action, and a plan should
+    not score higher for padding itself with scaffolding.
+    """
+    return sum(1 for s in plan.steps
+               if s.verdict not in UNGRADED and (step_n is None or s.n < step_n))
 
 
 def classify(plan) -> dict:
@@ -117,6 +137,9 @@ def classify(plan) -> dict:
                                 METHOD_ERROR as the first failing step.
       4. PROCEDURE           -- right route, unexecutable as written.
       5. COMMITMENT          -- action named, magnitude never decided.
+                                EMPTY BY CONSTRUCTION since quantities were
+                                dropped (see NON_EXECUTABLE); kept in the
+                                tuple so column sets do not drift.
       6. INCOMPLETE          -- every step executed and the plan still never
                                 established the casualty's terminal fact.
                                 Expected to be empty at present and defined
@@ -158,15 +181,22 @@ def classify(plan) -> dict:
 
     if step is not None:
         verdict = next(s.verdict for s in plan.steps if s.n == step)
-        return _result(_VERDICT_CLASS[verdict], step, step - 1, structural=False)
+        return _result(_VERDICT_CLASS[verdict], step,
+                       graded_steps_before(plan, step), structural=False)
+
+    # A plan that never failed executed every graded step it has. The length
+    # is the plan's own, not a constant: the procedural_v3 arm lets the model
+    # choose how many steps to write, and a hard-coded 6 would rank a plan
+    # failing at step 9 (EPL 8) above a clean 10-step plan.
+    n_steps = graded_steps_before(plan)
 
     if not plan.goal_reached:
         # Nothing failed, route is fine, and the plan still did not get
         # there. goal_reached is reused rather than re-deriving the terminal
         # fact check, so the two can never disagree.
-        return _result("INCOMPLETE", None, 6, structural=False)
+        return _result("INCOMPLETE", None, n_steps, structural=False)
 
-    return _result("VALID", None, 6, structural=False)
+    return _result("VALID", None, n_steps, structural=False)
 
 
 def _result(failure_class: str, failure_step: Optional[int], epl: int,
@@ -198,69 +228,87 @@ def is_cascade(plan, step_n: int) -> bool:
     return False
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  What the registry cannot express
-# ─────────────────────────────────────────────────────────────────────────────
-#
-# NO_MATCH is 385 of 1,980 steps -- 19% of everything these plans say. Reading
-# them, 74% fall into six recurring capabilities the registry has no vocabulary
-# for: its 47 tools are technical actions plus assessments, and a real salvage
-# plan is substantially operational scaffolding. "Establish a safety perimeter"
-# alone accounts for 83 steps.
-#
-# The obvious move -- add six tools and close the gap -- was considered and
-# REJECTED. Tools with no effects and no route participation would convert those
-# steps from NO_MATCH to SPECIFIED_UNGRADED, dropping PROCEDURE and lifting EPL
-# without a single plan becoming one step more executable. That is the same
-# direction of error as the incidental-digit bug: it flatters the planner.
-# NO_MATCH currently says, honestly, "the registry cannot express this";
-# afterwards it would say "fine".
-#
-# The gap is a finding, not a defect to paper over. So it gets labelled here
-# instead, at analysis time, on rows that already exist. This function MUST NOT
-# affect any verdict, class or EPL -- there is a test asserting exactly that.
+# ── all-errors mode ──────────────────────────────────────────────────────────
 
-#: Ordered, because a step can match more than one pattern and the first hit
-#: wins; earlier entries are the more specific readings. Patterns were written
-#: against the corpus and their coverage measured, not guessed.
-NO_MATCH_CATEGORIES = (
-    ("site_control",
-     r"perimeter|exclusion zone|safety zone|secure the (scene|site|area)"
-     r"|restrict access|cordon|keep (unauthorized|unauthorised)"),
-    ("liaison",
-     r"coordinat\w+ with|notify|liaise|contact (local|the) (authorit|port|coast)"
-     r"|in (consultation|conjunction) with"),
-    ("temporary_stabilisation",
-     r"install temporary|temporary (mooring|ballast|bulkhead|barrier|pontoon)"
-     r"|shore up|cribbing"),
-    ("ongoing_monitoring",
-     r"monitor (the )?(weather|sea state|vessel|conditions|stability)"
-     r"|continuous(ly)? monitor|keep under observation"),
-    ("logistics",
-     r"mobili[sz]e|arrange for|procure|stage (the )?equipment"),
-    ("documentation",
-     r"document|report for (regulatory|insurance)|final inspection"
-     r"|post-salvage inspection|record keeping"),
+#: Every error type all_errors() can report, plan-level first. n_error_types
+#: counts how many of these a plan has at least one of.
+ERROR_TYPES = ("perception", "no_technique", "technique_inadmissible",
+               "technique_incomplete", "method", "sequence", "hedged", "no_match")
+
+#: The step-level types whose check reads the world state, and so can be
+#: knocked on by an earlier step that failed to add a fact to it. method and
+#: no_match are judged on the step alone.
+STATE_DEPENDENT = ("sequence", "hedged")
+
+
+def all_errors(plan) -> dict:
+    """Every error in a plan, not just the first -- the counterpart to
+    classify(), which answers "is this plan valid" and so stops at the
+    first failure.
+
+    Plan-level errors are 0/1 (err_*); step-level errors are counts of the
+    executor's raw scan flags (n_err_*), so a step that is both out of order
+    and hedged counts once under each. Unquantified steps are not errors
+    here: quantities were dropped from P9's question (see NON_EXECUTABLE).
+
+    Knock-on. A step is knocked on if a genuine NO_MATCH comes before it:
+    that step added no fact to the world state, so a later sequence or hedge
+    error may only be reporting the gap. The *_independent counts exclude
+    those. METHOD_ERROR is not a source -- the executor still applies a
+    wrong-family tool's effects -- and SUPPORT steps carry no flags at all.
+
+    technique_incomplete is a required action the plan never calls
+    (not_attempted's route: entries), NOT route_completeness < 1: that ratio
+    also drops core tools that were called but failed a step check, which
+    would count those errors a second time.
+    """
+    err = {
+        "perception": int(plan.foreign_casualty is not None),
+        "no_technique": int(plan.route_name is None),
+        "technique_inadmissible": int(plan.route_admissible == "no"),
+        "technique_incomplete": int(any(x.startswith("route:")
+                                        for x in plan.not_attempted)),
+    }
+    counts = dict.fromkeys(("method", "sequence", "hedged", "no_match"), 0)
+    independent = dict.fromkeys(STATE_DEPENDENT, 0)
+    knocked_on = False
+    n_support = 0
+    for step in sorted(plan.steps, key=lambda s: s.n):
+        if step.verdict in UNGRADED:
+            n_support += 1
+            continue
+        for k in counts:
+            if step.flags.get(k):
+                counts[k] += 1
+                if k in independent and not knocked_on:
+                    independent[k] += 1
+        if step.flags.get("no_match"):
+            knocked_on = True
+
+    row = {f"err_{k}": v for k, v in err.items()}
+    for k, v in counts.items():
+        row[f"n_err_{k}"] = v
+        if k in independent:
+            row[f"n_err_{k}_independent"] = independent[k]
+    present = {k for k, v in err.items() if v} | {k for k, v in counts.items() if v}
+    row["n_error_types"] = len(present)
+    row["n_support_steps"] = n_support
+    row["n_graded_steps"] = len(plan.steps) - n_support
+    return row
+
+
+#: per_image.csv column order for all_errors(). Built from ERROR_TYPES so it
+#: cannot drift from the function.
+ALL_ERRORS_FIELDS = (
+    [f"err_{k}" for k in ERROR_TYPES[:4]]
+    + [c for k in ERROR_TYPES[4:] for c in
+       ([f"n_err_{k}"] + ([f"n_err_{k}_independent"] if k in STATE_DEPENDENT else []))]
+    + ["n_error_types", "n_support_steps", "n_graded_steps"]
 )
 
-_NO_MATCH_RE = tuple((name, re.compile(pat, re.I)) for name, pat in NO_MATCH_CATEGORIES)
 
-#: What a step gets when none of the six patterns fit. These are the honest
-#: residual -- what these plans contain that neither the registry nor this
-#: categorisation can express -- and their size is the number worth reporting.
-UNCATEGORISED = "other"
-
-
-def no_match_category(step_text: str, verdict: str = "NO_MATCH") -> str:
-    """Which missing capability a NO_MATCH step is reaching for.
-
-    Returns "" for any step that is not NO_MATCH, so the column stays empty
-    rather than inviting the reading that a graded step was also "really"
-    something else.
-    """
-    if verdict != "NO_MATCH":
-        return ""
-    for name, rx in _NO_MATCH_RE:
-        if rx.search(step_text or ""):
-            return name
-    return UNCATEGORISED
+# The categoriser lives in support.py, because the executor now uses it to
+# decide which unmapped steps are SUPPORT -- and executor imports nothing from
+# here. Re-exported so existing imports keep working.
+from pipelines.plan_adequacy.support import (NO_MATCH_CATEGORIES,  # noqa: E402,F401
+                                             UNCATEGORISED, no_match_category)

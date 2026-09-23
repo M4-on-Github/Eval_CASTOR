@@ -38,6 +38,7 @@ Usage:
 
 import argparse
 import csv
+import os
 import sys
 from collections import Counter
 from pathlib import Path
@@ -45,8 +46,9 @@ from pathlib import Path
 EVAL_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(EVAL_ROOT))
 
-from pipelines.plan_adequacy.classify import (FAILURE_CLASSES,
-                                              PRE_EXECUTION_CLASSES, classify)
+from pipelines.plan_adequacy.classify import (ERROR_TYPES, FAILURE_CLASSES,
+                                              PRE_EXECUTION_CLASSES,
+                                              STATE_DEPENDENT, classify)
 from pipelines.plan_adequacy.hazard import (hazard_rank, hazard_table,
                                             mean_epl_by_class, prevalence)
 from pipelines.plan_adequacy.inject import recall_by_class, run_injections
@@ -70,6 +72,8 @@ DIRECTIONS = {
     "STRATEGY_PERCEPTION": "visual grounding / casualty ID",
     "STRATEGY_TECHNIQUE":  "vessel-conditioned technique selection",
     "PROCEDURE":           "sequencing / dependency structure",
+    # Empty by construction since quantities were dropped (classify.
+    # NON_EXECUTABLE); the row stays so the pre-declared table is unchanged.
     "COMMITMENT":          "magnitude elicitation",
     "INCOMPLETE":          "goal-directed termination",
     "VALID":               "--",
@@ -77,22 +81,80 @@ DIRECTIONS = {
 
 
 def no_match_breakdown(per_step_paths) -> dict:
-    """{category: n} over every NO_MATCH step, plus the total.
+    """{verdict: {category: n}} over every step the extractor could not map,
+    split into SUPPORT (ungraded scaffolding) and genuine NO_MATCH, plus
+    per-verdict totals.
 
     Reported beside the diagnosis table because PROCEDURE's 0% planner
     attribution is otherwise just a number: this says what those steps are
-    actually reaching for. The registry has no vocabulary for them and
-    deliberately still does not -- see classify.no_match_category.
+    actually reaching for. The split matters because only the NO_MATCH half
+    stops a plan; a category with many SUPPORT steps and few NO_MATCH ones is
+    a gap the grading already absorbs, not a failure. See support.py.
     """
-    counts = Counter()
-    total = 0
+    counts = {"SUPPORT": Counter(), "NO_MATCH": Counter()}
     for path in per_step_paths:
         with open(path, newline="", encoding="utf-8") as f:
             for r in csv.DictReader(f):
-                if r.get("verdict") == "NO_MATCH":
-                    total += 1
-                    counts[r.get("no_match_category") or "other"] += 1
-    return {"counts": dict(counts), "total": total}
+                if r.get("verdict") in counts:
+                    counts[r["verdict"]][r.get("no_match_category") or "other"] += 1
+    return {"counts": {v: dict(c) for v, c in counts.items()},
+            "total": {v: sum(c.values()) for v, c in counts.items()}}
+
+
+def all_errors_table(rows_by_arm: dict) -> list:
+    """Every error in every plan, per arm -- the all-errors counterpart to
+    build_diagnosis(), which reports only first failures.
+
+    One row per error type. For each arm: the % of plans with at least one
+    such error, and (step-level types) the total count of flagged steps. For
+    sequence and hedged, `independent` is the % of plans with at least one
+    such error NOT downstream of an earlier genuine NO_MATCH (classify.
+    all_errors); the gap between the two % columns is how much of that error
+    type could be the extractor rather than the plan.
+
+    `rows_by_arm` maps an arm name to its per_image.csv rows as read by
+    csv.DictReader.
+    """
+    table = []
+    for etype in ERROR_TYPES:
+        plan_level = etype in ERROR_TYPES[:4]
+        col = f"err_{etype}" if plan_level else f"n_err_{etype}"
+        row = {"error_type": etype}
+        for arm, rows in rows_by_arm.items():
+            n = len(rows) or 1
+            vals = [int(r[col]) for r in rows]
+            row[f"{arm}_pct"] = round(sum(1 for v in vals if v) / n * 100, 1)
+            row[f"{arm}_steps"] = "--" if plan_level else sum(vals)
+            if etype in STATE_DEPENDENT:
+                ind = [int(r[f"n_err_{etype}_independent"]) for r in rows]
+                row[f"{arm}_indep_pct"] = round(sum(1 for v in ind if v) / n * 100, 1)
+            else:
+                row[f"{arm}_indep_pct"] = "--"
+        table.append(row)
+    return table
+
+
+def _short_names(arms: list) -> list:
+    """Run names share a long prefix and suffix (answers_qwen3vl8b_baseline_
+    ..._v2_improved); strip what every arm has in common so the column
+    headers say which arm is which."""
+    if len(arms) < 2:
+        return [a[-28:] for a in arms]
+    pre = os.path.commonprefix(arms)
+    suf = os.path.commonprefix([a[::-1] for a in arms])[::-1]
+    return [(a[len(pre):len(a) - len(suf)] or a)[-28:] for a in arms]
+
+
+def _fmt_all_errors(table: list, arms: list) -> str:
+    head = f"{'error type':<24}" + "".join(
+        f"{name:>30}" for name in _short_names(arms))
+    sub_ = f"{'':<24}" + "".join(f"{'%plans':>10}{'%indep':>10}{'steps':>10}" for _ in arms)
+    lines = [head, sub_, "-" * len(sub_)]
+    for r in table:
+        lines.append(f"{r['error_type']:<24}" + "".join(
+            f"{r[f'{a}_pct']:>9.1f}%{str(r[f'{a}_indep_pct']):>10}{str(r[f'{a}_steps']):>10}"
+            for a in arms))
+    return "\n".join(lines)
 
 
 def rows_from_per_image(path: Path) -> list:
@@ -213,18 +275,30 @@ def main():
 
     epls = [r["epl"] for r in rows]
     zeros = sum(1 for e in epls if e == 0)
-    print(f"\nmean EPL = {sum(epls)/len(epls):.2f} of 6   "
+    print(f"\nmean EPL (graded steps) = {sum(epls)/len(epls):.2f}   "
           f"({zeros}/{len(epls)} = {zeros/len(epls)*100:.0f}% of plans at 0)\n")
     print(_fmt_table(table))
 
-    if gap["total"]:
-        print(f"\nNO_MATCH = {gap['total']} steps: what the registry cannot express")
-        named = sum(v for k, v in gap["counts"].items() if k != "other")
-        for cat, n in sorted(gap["counts"].items(), key=lambda kv: -kv[1]):
+    by_arm = {}
+    for run in args.runs:
+        with open(base / run / "per_image.csv", newline="", encoding="utf-8") as f:
+            by_arm[run] = list(csv.DictReader(f))
+    # A per_image.csv written before all-errors mode existed has no such
+    # columns; skip the table rather than crash on an old run.
+    if all(rs and "n_error_types" in rs[0] for rs in by_arm.values()):
+        print("\nall errors per plan, not just the first "
+              "(%indep: not downstream of a genuine NO_MATCH):")
+        print(_fmt_all_errors(all_errors_table(by_arm), list(by_arm)))
+
+    n_sup, n_nm = gap["total"]["SUPPORT"], gap["total"]["NO_MATCH"]
+    if n_sup or n_nm:
+        print(f"\nunmapped steps = {n_sup + n_nm}: {n_sup} SUPPORT (ungraded), "
+              f"{n_nm} NO_MATCH (stop the plan)")
+        print(f"  {'category':<26}{'SUPPORT':>9}{'NO_MATCH':>10}")
+        sup, nm = gap["counts"]["SUPPORT"], gap["counts"]["NO_MATCH"]
+        for cat in sorted(set(sup) | set(nm), key=lambda c: -(sup.get(c, 0) + nm.get(c, 0))):
             tag = "   <- honest residual" if cat == "other" else ""
-            print(f"  {cat:<26} {n:>4}  ({n / gap['total'] * 100:>4.0f}%){tag}")
-        print(f"  {'--- named capabilities':<26} {named:>4}  "
-              f"({named / gap['total'] * 100:>4.0f}%)")
+            print(f"  {cat:<26}{sup.get(cat, 0):>9}{nm.get(cat, 0):>10}{tag}")
 
     if repair_rows:
         print("\nfirst-repair transitions (repaired class -> what failed next):")

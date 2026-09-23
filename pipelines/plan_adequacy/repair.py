@@ -44,10 +44,11 @@ Two known asymmetries, both disclosed rather than corrected:
 from pipelines.plan_adequacy.classify import PRE_EXECUTION_CLASSES, classify
 from pipelines.plan_adequacy.executor import execute_plan
 
-#: Cap on repair iterations. Six steps means at most six repairs, and the
-#: guard exists only so a future executor change that fails to advance cannot
-#: spin forever.
-MAX_REPAIRS = 6
+#: Default cap on repair iterations: None means the plan's own step count,
+#: since a plan can need at most one repair per step and procedural_v3 plans
+#: are not all six steps long. repair_to_exhaustion also stops on its own if
+#: a repair fails to move the failure, so the cap is only a backstop.
+MAX_REPAIRS = None
 
 
 def repair_once(calls, casualty, scenario, tool_registry, route_registry,
@@ -97,11 +98,19 @@ def repair_to_exhaustion(calls, casualty, scenario, tool_registry,
         empirical check on hazard.py's masking correction, since a class that
         only ever appears as a SECOND repair is precisely a masked class.
     """
+    if max_repairs is None:
+        max_repairs = len(calls)
     chain, repaired = [], frozenset()
     for _ in range(max_repairs):
         step = repair_once(calls, casualty, scenario, tool_registry,
                            route_registry, plan_text, repaired)
         if step is None:
+            break
+        if step["repaired_step"] in repaired:
+            # The executor ignored the exemption and the same step failed
+            # again. Stopping here keeps a chain of identical zero-delta
+            # repairs out of every aggregate; before NO_MATCH repair was
+            # wired in, this is exactly what every NO_MATCH chain was.
             break
         chain.append(step)
         repaired = step["repaired_steps"]

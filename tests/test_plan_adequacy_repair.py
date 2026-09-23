@@ -54,6 +54,18 @@ def _clean_aground():
     ]
 
 
+def _with_unmapped(calls, after):
+    """Insert an unmapped real action after each listed step number and
+    renumber -- inserted, not substituted, so no real step's effects go
+    missing and the only failures are the insertions themselves."""
+    out = []
+    for c in calls:
+        out.append(c)
+        if c.step_num in after:
+            out.append(_call(0, "no_match", text="Deploy divers to cut the anchor chain"))
+    return [_call(i + 1, c.tool, c.step_text, c.params) for i, c in enumerate(out)]
+
+
 def test_repairing_a_clean_plan_returns_nothing():
     """Idempotence: there is no first failure, so there is nothing to
     neutralise and no delta to claim."""
@@ -98,36 +110,42 @@ def test_granting_a_precondition_also_unblocks_downstream_steps():
     assert step["epl_after"] >= 2          # step 2 no longer violates
 
 
-def test_repairing_an_unspecified_step_is_a_commitment_repair():
-    tr, rr = _reg()
-    calls = _clean_aground()
-    # Strip the magnitudes from the step TEXT -- params are deliberately left
-    # populated, since specificity must not be satisfiable from them.
-    calls[4] = _call(5, "attach_tug", text="Attach tugs",
-                     params={"count": 2, "shp": 4000.0})
-    calls[5] = _call(6, "pull", text="Pull hard", params={"force_t": 90})
-
-    before = classify(execute_plan(calls, "aground", _scenario(), tr, rr))
-    assert before["failure_class"] == "COMMITMENT"
-    assert before["failure_step"] == 5
-
-    step = repair_once(calls, "aground", _scenario(), tr, rr)
-    assert step["repaired_class"] == "COMMITMENT"
-    assert step["next_class"] == "COMMITMENT"      # step 6 is unspecified too
-    assert step["delta_epl"] == 1                  # a wall, not a speed bump
-
-
-def test_exhaustion_chains_repairs_and_counts_distance_to_valid():
+def test_an_unquantified_plan_has_nothing_to_repair():
+    """Quantities no longer stop a plan, so there is no COMMITMENT failure
+    for repair to neutralise."""
     tr, rr = _reg()
     calls = _clean_aground()
     calls[4] = _call(5, "attach_tug", text="Attach tugs", params={"count": 2})
     calls[5] = _call(6, "pull", text="Pull hard", params={"force_t": 90})
+    assert repair_once(calls, "aground", _scenario(), tr, rr) is None
+
+
+def test_exhaustion_chains_repairs_and_counts_distance_to_valid():
+    tr, rr = _reg()
+    # Two unmapped actions inserted into a clean plan: each stops it until
+    # repair skips it.
+    calls = _with_unmapped(_clean_aground(), after=(1, 4))
 
     out = repair_to_exhaustion(calls, "aground", _scenario(), tr, rr)
-    assert [c["repaired_step"] for c in out["chain"]] == [5, 6]
-    assert out["class_sequence"] == ["COMMITMENT", "COMMITMENT"]
+    assert [c["repaired_step"] for c in out["chain"]] == [2, 6]
+    assert out["class_sequence"] == ["PROCEDURE", "PROCEDURE"]
     assert out["repairs_to_valid"] == 2
-    assert out["final_epl"] == 6
+    assert out["final_epl"] == 6                  # the skipped steps don't count
+
+
+def test_repairing_a_no_match_skips_it_and_moves_on():
+    """Regression: the executor used to ignore the repair exemption on
+    NO_MATCH steps, so repair re-picked the same step until the cap and
+    every NO_MATCH delta_epl read 0."""
+    tr, rr = _reg()
+    calls = _with_unmapped(_clean_aground(), after=(1,))
+    step = repair_once(calls, "aground", _scenario(), tr, rr)
+    assert step["repaired_step"] == 2
+    assert step["epl_before"] == 1
+    assert step["next_class"] == "VALID" and step["epl_after"] == 6
+
+    out = repair_to_exhaustion(calls, "aground", _scenario(), tr, rr)
+    assert len({c["repaired_step"] for c in out["chain"]}) == len(out["chain"])
 
 
 def test_repair_never_exceeds_the_iteration_cap():

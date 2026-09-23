@@ -124,3 +124,92 @@ def test_admissible_unknown_pending_physics():
     route = [r for r in reg.for_casualty("aground") if r.name == "tug_pull"][0]
     scenario = SimpleNamespace()
     assert admissible(route, scenario) == "unknown"
+
+
+# ---------------------------------------------------------------------------
+# Recognition ties and admissibility
+# ---------------------------------------------------------------------------
+# capsized/manual_righting and capsized/crane_lift_right both have
+# core_tools == {right_vessel}. Declaration order made manual_righting win
+# every time, so crane_lift_right was unreachable and all 22 corpus plans
+# saying only "right the vessel" were scored inadmissible -- including 10
+# medium-vessel cases crane_lift_right allows. See admissible_over_ties.
+
+def _scen(**kw):
+    from types import SimpleNamespace
+    kw.setdefault("image", "capsized/test.jpg")
+    return SimpleNamespace(**kw)
+
+
+def test_right_vessel_alone_records_both_tied_routes():
+    from pipelines.plan_adequacy.methods import RouteRegistry, recognise_route
+    reg = RouteRegistry.load()
+    match = recognise_route({"right_vessel"}, "capsized", reg)
+    names = {r.name for r in match.tied_routes}
+    assert names == {"manual_righting", "crane_lift_right"}, names
+    # route stays first-declared, so route_name/coherence are unchanged.
+    assert match.route.name == "manual_righting"
+
+
+def test_a_medium_vessel_righting_tie_is_ambiguous_not_inadmissible():
+    """manual_righting says no, crane_lift_right says yes, and the plan said
+    only "right the vessel". Recording that as a pass OR a failure invents
+    information the call set does not contain."""
+    from pipelines.plan_adequacy.methods import (RouteRegistry, recognise_route,
+                                                 admissible_over_ties)
+    reg = RouteRegistry.load()
+    match = recognise_route({"right_vessel"}, "capsized", reg)
+    assert admissible_over_ties(match, _scen(size_category="medium")) == "ambiguous"
+
+
+def test_a_large_vessel_righting_tie_is_still_inadmissible():
+    """The tie only matters when the tied routes disagree. At `large` neither
+    righting route is admissible, so the finding stands however the tie falls
+    -- these are the 12 genuine corpus failures that must NOT be lost."""
+    from pipelines.plan_adequacy.methods import (RouteRegistry, recognise_route,
+                                                 admissible_over_ties)
+    reg = RouteRegistry.load()
+    match = recognise_route({"right_vessel"}, "capsized", reg)
+    assert admissible_over_ties(match, _scen(size_category="large")) == "no"
+
+
+def test_a_small_vessel_righting_tie_is_admissible():
+    from pipelines.plan_adequacy.methods import (RouteRegistry, recognise_route,
+                                                 admissible_over_ties)
+    reg = RouteRegistry.load()
+    match = recognise_route({"right_vessel"}, "capsized", reg)
+    assert admissible_over_ties(match, _scen(size_category="small")) == "yes"
+
+
+def test_an_unpopulated_scenario_field_still_reads_unknown_not_ambiguous():
+    """"unknown" outranks "ambiguous": if we don't know the size we can't know
+    the two routes disagree. executor.py already declines to penalise it."""
+    from pipelines.plan_adequacy.methods import (RouteRegistry, recognise_route,
+                                                 admissible_over_ties)
+    reg = RouteRegistry.load()
+    match = recognise_route({"right_vessel"}, "capsized", reg)
+    assert admissible_over_ties(match, _scen()) == "unknown"
+
+
+def test_the_foam_tie_is_not_ambiguous_because_both_routes_agree():
+    """high_expansion_foam and deck_foam_system also tie on {apply_foam}, but
+    both are admissibility_kind "always", so the tie does not matter and the
+    verdict is a confident "yes". Guards against over-firing ambiguity."""
+    from pipelines.plan_adequacy.methods import (RouteRegistry, recognise_route,
+                                                 admissible_over_ties)
+    reg = RouteRegistry.load()
+    match = recognise_route({"apply_foam"}, "on_fire", reg)
+    assert len(match.tied_routes) >= 2
+    assert admissible_over_ties(match, _scen()) == "yes"
+
+
+def test_a_non_tie_still_resolves_to_a_single_route():
+    """The matched-count tie-break must survive: {lighter_cargo,
+    rig_beach_gear, dredge, pull} fully covers several routes but `combined`
+    explains the most, so it wins outright and is NOT a tie."""
+    from pipelines.plan_adequacy.methods import RouteRegistry, recognise_route
+    reg = RouteRegistry.load()
+    match = recognise_route({"lighter_cargo", "rig_beach_gear", "dredge", "pull"},
+                            "aground", reg)
+    assert len(match.tied_routes) == 1
+    assert match.tied_routes[0] is match.route

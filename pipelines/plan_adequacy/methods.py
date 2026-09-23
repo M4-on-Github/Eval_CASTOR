@@ -69,6 +69,12 @@ class RouteMatch:
     matched_tools: frozenset     # called tools that belong to route.core_tools
     unmatched_tools: frozenset   # called action tools that do NOT belong to it
                                   # -- the numerator's complement for route_coherence
+    #: EVERY route that tied for best on (score, matched_count), in
+    #: declaration order; `route` above is its first element. Usually a
+    #: 1-tuple. When it is not, the plan's call set genuinely does not
+    #: distinguish these routes, and any single pick is arbitrary -- see
+    #: admissible_over_ties for what that means for admissibility.
+    tied_routes: tuple = ()
 
 
 class RouteRegistry:
@@ -173,6 +179,7 @@ def recognise_route(called_tools: set, casualty: str, registry: RouteRegistry) -
     best = None
     best_key = (-1.0, -1)
     best_matched = frozenset()
+    tied = []
     for route in candidates:
         if not route.core_tools:
             continue
@@ -181,6 +188,12 @@ def recognise_route(called_tools: set, casualty: str, registry: RouteRegistry) -
         key = (score, len(matched))
         if key > best_key:
             best, best_key, best_matched = route, key, matched
+            tied = [route]
+        elif key == best_key:
+            # A genuine tie: strict > above means `best` keeps the
+            # first-declared route, but the tie is now RECORDED rather than
+            # silently resolved by JSON key order. See admissible_over_ties.
+            tied.append(route)
     best_score = best_key[0] if best is not None else 0.0
 
     if best is None or best_score < RouteRegistry.RECOGNITION_FLOOR:
@@ -194,7 +207,52 @@ def recognise_route(called_tools: set, casualty: str, registry: RouteRegistry) -
     all_action_tools = {t for r in candidates for t in r.core_tools}
     unmatched = (called_tools & all_action_tools) - best.core_tools
 
-    return RouteMatch(route=best, score=best_score, matched_tools=best_matched, unmatched_tools=unmatched)
+    return RouteMatch(route=best, score=best_score, matched_tools=best_matched,
+                       unmatched_tools=unmatched, tied_routes=tuple(tied))
+
+
+def admissible_over_ties(match: RouteMatch, scenario) -> str:
+    """Admissibility of a RouteMatch, accounting for recognition ties.
+
+    Returns "yes" | "no" | "unknown" | "ambiguous".
+
+    recognise_route must pick ONE route for route_name/coherence/completeness,
+    and breaks ties by declaration order. For admissibility that is not good
+    enough, because two tied routes can disagree: capsized/manual_righting and
+    capsized/crane_lift_right both have core_tools == {right_vessel} and are
+    therefore indistinguishable from the call set alone, but the first allows
+    only `small` and the second allows `small` and `medium`. Because
+    manual_righting is declared first it always wins, so crane_lift_right can
+    never be recognised, and on the CASTOR corpus all 22 plans that said only
+    "right the vessel" were scored inadmissible -- 10 of them medium-vessel
+    cases that crane_lift_right would have allowed. Ten hard failures decided
+    by JSON key order.
+
+    The rule here is to resolve the tie only when it does not matter:
+
+      * every tied route agrees      -> that verdict, with full confidence.
+        (The 12 large-vessel cases are still "no": neither righting route is
+        admissible at that size, so the finding stands however the tie falls.)
+      * any tied route says unknown  -> "unknown", which executor.py already
+        declines to penalise.
+      * tied routes disagree yes/no  -> "ambiguous". The plan said only
+        "right the vessel"; we cannot tell which it meant, and guessing in
+        either direction is wrong. Scoring it admissible would record the
+        ungradeable as a pass, which is exactly the error the NO_MATCH ->
+        UNMEASURED treatment exists to avoid.
+
+    "ambiguous" is excluded from admissibility scoring and reported with its
+    size, the same contract as "unknown".
+    """
+    routes = match.tied_routes or ((match.route,) if match.route is not None else ())
+    if not routes:
+        return "unknown"
+    verdicts = {admissible(r, scenario) for r in routes}
+    if len(verdicts) == 1:
+        return verdicts.pop()
+    if "unknown" in verdicts:
+        return "unknown"
+    return "ambiguous"
 
 
 #: How many tools distinctive to the foreign family a plan must call before

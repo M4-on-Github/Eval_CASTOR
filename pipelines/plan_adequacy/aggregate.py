@@ -22,7 +22,8 @@ from typing import Optional
 EVAL_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(EVAL_ROOT))
 
-from pipelines.plan_adequacy.classify import (classify, is_cascade,
+from pipelines.plan_adequacy.classify import (ALL_ERRORS_FIELDS, all_errors,
+                                              classify, is_cascade,
                                               no_match_category)
 from pipelines.plan_adequacy.provenance import stamp
 from pipelines.plan_adequacy.executor import STEP_VERDICTS, PlanResult
@@ -72,12 +73,24 @@ def build_per_step_rows(results: list) -> list:
                 # Label only -- see classify.no_match_category for why the
                 # gap is reported rather than closed.
                 "no_match_category": no_match_category(s.text, s.verdict),
+                # All-dimensions scan. `verdict` above is the FIRST check to
+                # fire in precedence order and so hides every later one; these
+                # five say what each check found regardless of whether the
+                # cascade reached it. Rates should be read off these, not off
+                # verdict counts -- sequencing is 58% of plans by verdict and
+                # 88% by flag. See executor.execute_plan.
+                **{f"scan_{k}": s.flags.get(k, "") for k in SCAN_FLAGS},
             })
     return rows
 
 
+#: Order is the executor's precedence order, which is what makes the
+#: equivalence test in tests/test_plan_adequacy_executor.py readable.
+SCAN_FLAGS = ("no_match", "hedged", "method", "sequence", "unquantified")
+
 PER_STEP_FIELDNAMES = ["image", "casualty", "step_num", "step_text", "tool", "verdict",
-                        "detail", "conditional", "is_cascade", "no_match_category"]
+                        "detail", "conditional", "is_cascade", "no_match_category",
+                        *(f"scan_{k}" for k in SCAN_FLAGS)]
 
 
 # ---------------------------------------------------------------------------
@@ -144,6 +157,9 @@ def _flatten_plan_row(result: PlanResult) -> dict:
     # observation, so downstream means can exclude them instead of
     # averaging a definition.
     row.update(classify(result))
+    # All-errors mode: everything wrong with the plan, where classify() above
+    # stops at the first failure. See classify.all_errors.
+    row.update(all_errors(result))
     for v in STEP_VERDICTS:
         row[f"n_{v}"] = s["counts"].get(v, 0)
     for field in _LIST_FIELDS:
@@ -167,6 +183,7 @@ def _per_image_fieldnames() -> list:
               "unresolved_gate_count", "self_contradictory_on_size", "goal_reached",
               "foreign_casualty",
               "failure_class", "failure_step", "epl", "epl_is_structural"]
+    fields += ALL_ERRORS_FIELDS
     fields += [f"n_{v}" for v in STEP_VERDICTS]
     for field in _LIST_FIELDS:
         fields += [f"n_{field}", f"{field}_text"]
@@ -186,6 +203,7 @@ PER_IMAGE_FIELDNAMES = _per_image_fieldnames()
 _SUMMARY_NUMERIC_FIELDS = (
     ["route_score", "route_coherence", "route_completeness", "gate_rate",
      "unresolved_gate_count"]
+    + ALL_ERRORS_FIELDS
     + [f"n_{v}" for v in STEP_VERDICTS]
     + [f"n_{f}" for f in _LIST_FIELDS]
 )
