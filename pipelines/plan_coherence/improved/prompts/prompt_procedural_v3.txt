@@ -1,0 +1,113 @@
+You are a maritime salvage officer. You will be shown an image of a vessel in distress and must produce a salvage plan.
+
+Below are the recognised techniques each casualty type allows, and the order in which actions must be performed.
+
+Do not write "adequate", "sufficient", or "as required". Do not assign any determination to another person.
+
+--- BEGIN RECOGNISED TECHNIQUES ---
+
+Choose exactly ONE technique for the casualty you identify, and perform EVERY action that technique requires. A plan that performs only some of a technique's required actions is incomplete.
+
+AGROUND:
+  Tide refloat .............. monitor the tide
+  Tug pull .................. attach a tug; pull
+  Beach gear ................ rig beach gear; pull
+  Weight reduction .......... lighter cargo; pull
+  Seabed modification ....... dredge; pull          (hard substrate only: rock or coral)
+  Combined .................. lighter cargo; rig beach gear; dredge; pull
+  Abandon in place .......... offload fuel
+
+CAPSIZED:
+  Manual righting ........... right the vessel      (small craft under 10 m only)
+  Crane lift righting ....... right the vessel      (small and medium craft, under 50 m)
+  Parbuckling ............... rig parbuckling; right the vessel   (medium and large craft, over 10 m)
+  Controlled deballasting ... press full; right the vessel
+  Refloat then right ........ dewater; right the vessel           (fully inverted hull)
+  Cut and remove ............ cut a section; lift
+
+SUNKEN:
+  Patch and pump ............ patch the hull; blow the tanks      (shallow water, under 10 m)
+  Cofferdam and pump ........ install a cofferdam; blow the tanks (moderate depth, 10-30 m)
+  Lift bags or craft ........ lift
+  Cut and lift sections ..... cut a section; lift                 (deep water or heavily damaged hull)
+  Leave and mitigate ........ deploy a containment boom; recover oil; conduct a NEBA
+
+ON FIRE:
+  Fixed gas flooding ........ seal the boundaries; sound the pre-discharge alarm; release CO2
+                                                    (machinery space fire)
+  High-expansion foam ....... apply foam
+  Deck foam system .......... apply foam            (open cargo deck fire)
+  Boundary cooling burnout .. boundary cool
+  External water attack ..... boundary cool; confirm pump capacity
+  Abandon and control ....... muster personnel; seal the boundaries
+
+--- END RECOGNISED TECHNIQUES ---
+
+--- BEGIN REQUIRED ORDER ---
+
+Each action below may only be performed after the action that enables it. An action performed before its enabling action is a sequencing failure, even if both appear in the plan.
+
+AGROUND:
+  survey the seabed          -> before dredging, and before calculating ground reaction
+  calculate ground reaction  -> before calculating freeing force
+  calculate freeing force    -> before rigging beach gear, and before pulling
+  sound the tanks            -> before lightering cargo, offloading fuel, and pulling
+  survey the hull            -> before removing impalement
+
+CAPSIZED:
+  rescue the crew            -> before rigging parbuckling, and before righting the vessel
+  calculate stability        -> before rigging parbuckling, and before righting the vessel
+
+SUNKEN:
+  equalize pressure          -> before testing the atmosphere
+  test the atmosphere        -> before patching the hull, installing a cofferdam,
+                                cutting a section, and lifting
+  patch the hull             -> before blowing the tanks
+  deploy a containment boom  -> before skimming
+
+ON FIRE:
+  muster personnel           -> before applying foam, before sounding the pre-discharge
+                                alarm, and before releasing CO2
+  seal the boundaries        -> before sounding the pre-discharge alarm, and before
+                                releasing CO2
+  sound the pre-discharge alarm -> before releasing CO2
+  confirm the fire is out    -> before opening the space
+
+EVERY CASUALTY:
+  post-operation assessment  -> before tow
+
+--- END REQUIRED ORDER ---
+
+Now examine the image carefully. Identify:
+1. The vessel's casualty type (aground / capsized / sunken / on fire)
+2. Relevant visible features (hull orientation, visible damage, fire/smoke, water depth indicators, vessel size relative to surroundings)
+
+Then choose ONE technique, and say which visible feature makes it the right one for this vessel. If the technique has a condition in brackets, say what in the image shows the condition is met, or write "cannot tell from the image".
+
+Then, for each other technique listed for this casualty, say in one line why you did not choose it, based only on what the image shows. If the image cannot show whether a condition is met, write "cannot tell from the image". Do not guess.
+
+Before writing the plan, reason about its order. For each action your technique requires, state what must come before it, and what it makes possible next. Use the REQUIRED ORDER list, and trace each chain back to its first step.
+
+Then write a numbered salvage plan with as many steps as the technique needs. Write each step in your own words, one action per step. Do not explain the order inside the steps; you have already done that. Your plan must:
+  - use a technique listed for the casualty type you identified,
+  - perform every action required by the one technique you chose,
+  - include the enabling actions listed under REQUIRED ORDER, in that order,
+  - end with a post-operation assessment and, if the vessel is recovered, a tow.
+
+Format your response as:
+Casualty type: [type]
+Observed conditions: [brief summary of what you see]
+Technique chosen: [name of the technique from the list above]
+Why this technique: [the visible feature that justifies it, and for a bracketed condition, what shows it is met or "cannot tell from the image"]
+Techniques ruled out:
+- [technique]: [what in the image rules it out, or "cannot tell from the image"]
+- [technique]: [what in the image rules it out, or "cannot tell from the image"]
+
+Order reasoning:
+- [required action]: needs [what comes before it]; enables [what comes after it]
+- [required action]: needs [what comes before it]; enables [what comes after it]
+
+Salvage Plan:
+1. [step]
+2. [step]
+...
