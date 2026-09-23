@@ -89,6 +89,8 @@ echo "============================================================"
 #   --containall  fully isolates the container so its %environment PATH is used
 #   --home $HOME  mounts the real home dir (required; --env HOME= is not permitted)
 #   PYTHON        explicit conda python — not on host PATH inside --containall
+#   BENCHYBENCH_ROOT  passed in explicitly: --containall drops the host env, and
+#                 the Python stages expand it in config.yaml's paths
 # ---------------------------------------------------------------------------
 DATA_DIR="/data/${USER}"
 HF_HOME="${DATA_DIR}/.cache/huggingface"
@@ -105,6 +107,7 @@ _APT_OPTS="--containall --nv \
     --bind ${DATA_DIR}:${DATA_DIR} \
     --bind ${HOME}:${HOME} \
     --env USER=${USER} \
+    --env BENCHYBENCH_ROOT=${BENCHYBENCH_ROOT} \
     --env PYTHONUNBUFFERED=1 \
     --env HF_HOME=${HF_HOME} \
     --env TRANSFORMERS_CACHE=${HF_HOME} \
